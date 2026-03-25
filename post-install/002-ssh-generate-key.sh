@@ -56,4 +56,4 @@ echo "=============================================="
 echo
 
 # Test the connection to the remote server
-ssh -i "$KEY_PATH" "$ssh_host"
+ssh proxmox
