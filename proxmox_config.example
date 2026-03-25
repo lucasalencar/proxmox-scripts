@@ -1,0 +1,11 @@
+# ~/.proxmox_config - Proxmox SSH Configuration
+# Copy this file to ~/.proxmox_config and customize
+
+# Required: IP address of your Proxmox server
+PROXMOX_SERVER_IP="192.168.1.100"
+
+# Optional: SSH username (defaults to "lucas" if not set)
+PROXMOX_SSH_USER="lucas"
+
+# Optional: SSH key file path (defaults to "$HOME/.ssh/proxmox" if not set)
+PROXMOX_SSH_KEY_PATH="$HOME/.ssh/proxmox"

@@ -9,16 +9,28 @@ if [[ "$(whoami)" == "root" ]]; then
   exit 1
 fi
 
-# Path where the SSH key will be stored
-KEY_PATH="$HOME/.ssh/proxmox"
+# Load configuration from file if exists
+CONFIG_FILE="$HOME/.proxmox_config"
+if [[ -f "$CONFIG_FILE" ]]; then
+  # Source config file (variables become available)
+  source "$CONFIG_FILE"
+  echo "Loaded configuration from $CONFIG_FILE"
+fi
 
-# Get server IP from command line argument
-server_ip=$1
-ssh_host="lucas@$server_ip"
+# Path where the SSH key will be stored (configurable via PROXMOX_SSH_KEY_PATH in config)
+KEY_PATH="${PROXMOX_SSH_KEY_PATH:-$HOME/.ssh/proxmox}"
 
-# Validate that server IP was provided
+# Get server IP with precedence: 1) Command-line arg > 2) Config file > 3) Error
+server_ip="${1:-$PROXMOX_SERVER_IP}"
+ssh_user="${PROXMOX_SSH_USER:-lucas}"
+ssh_host="${ssh_user}@${server_ip}"
+
+# Validate that server IP was provided (either via config or argument)
 if [[ -z "$server_ip" ]]; then
-  echo "Usage: $0 <server_ip>"
+  echo "Error: Proxmox server IP not specified."
+  echo "Either:"
+  echo "  1. Set PROXMOX_SERVER_IP in $CONFIG_FILE, OR"
+  echo "  2. Provide IP as command-line argument: $0 <server_ip>"
   exit 1
 fi
 
@@ -30,15 +42,15 @@ ssh-copy-id -i "$KEY_PATH" "$ssh_host"
 
 # Add SSH config entries if not already present
 # This allows 'ssh proxmox' to connect automatically
-if ! grep -q "IdentityFile ~/.ssh/proxmox" ~/.ssh/config 2>/dev/null; then
+if ! grep -q "IdentityFile $KEY_PATH" ~/.ssh/config 2>/dev/null; then
   cat >> ~/.ssh/config << 'EOF'
 
 Host proxmox
     HostName SERVER_IP
     User lucas
-    IdentityFile ~/.ssh/proxmox
+    IdentityFile KEY_PATH
 EOF
-  sed -i '' "s/SERVER_IP/$server_ip/" ~/.ssh/config
+  sed -i '' "s|SERVER_IP|$server_ip|g; s|KEY_PATH|$KEY_PATH|g" ~/.ssh/config
   echo "SSH config updated at ~/.ssh/config"
 fi
 
