@@ -2,6 +2,12 @@
 # Generates an Ed25519 SSH key and copies it to the specified server
 # for passwordless authentication.
 
+if [[ "$(whoami)" == "root" ]]; then
+  echo "Error: This script must not be run as root"
+  echo "You probably want to run this one on your personal computer"
+  exit 1
+fi
+
 KEY_PATH="$HOME/.ssh/proxmox"
 
 server_ip=$1

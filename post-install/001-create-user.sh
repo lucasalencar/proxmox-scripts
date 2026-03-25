@@ -1,5 +1,10 @@
 #!/bin/bash
 
+if [[ "$(whoami)" != "root" ]]; then
+  echo "Error: This script must be run as root"
+  exit 1
+fi
+
 apt update
 
 # Create user for ssh access
