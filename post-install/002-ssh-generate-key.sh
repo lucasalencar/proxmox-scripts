@@ -11,6 +11,7 @@ fi
 KEY_PATH="$HOME/.ssh/proxmox"
 
 server_ip=$1
+ssh_host="lucas@$server_ip"
 
 if [[ -z "$server_ip" ]]; then
   echo "Usage: $0 <server_ip>"
@@ -18,4 +19,4 @@ if [[ -z "$server_ip" ]]; then
 fi
 
 ssh-keygen -t ed25519 -f "$KEY_PATH" -N ""
-ssh-copy-id -i "$KEY_PATH" "lucas@$server_ip"
+ssh-copy-id -i "$KEY_PATH" "$ssh_host"
