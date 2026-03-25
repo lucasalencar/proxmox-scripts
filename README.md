@@ -10,6 +10,9 @@ Run on Proxmox server as root. Runs tteck's post-install script, then creates a 
 ### post-install/002-ssh-generate-key.sh
 Run on your local computer. Generates an SSH key and configures passwordless authentication to the Proxmox server.
 
+### post-install/003-enable-iommu.sh
+Run on Proxmox server as root. Enables IOMMU for PCIe passthrough (Intel processors).
+
 ## Setup Order
 
 ### Step 1: On Proxmox Server (as root)
@@ -19,9 +22,19 @@ Run on your local computer. Generates an SSH key and configures passwordless aut
 scp post-install/001-root-setup.sh root@<proxmox-ip>:/tmp/
 ssh root@<proxmox-ip>
 bash /tmp/001-root-setup.sh
+# Reboot when prompted
 ```
 
-### Step 2: On Your Computer (as your user)
+### Step 2: (Optional) Enable IOMMU for PCIe passthrough
+
+```bash
+scp post-install/003-enable-iommu.sh root@<proxmox-ip>:/tmp/
+ssh root@<proxmox-ip>
+bash /tmp/003-enable-iommu.sh
+# Reboot when prompted
+```
+
+### Step 3: On Your Computer (as your user)
 
 ```bash
 # Option A: Create config file (recommended for recurring use)
