@@ -20,3 +20,17 @@ fi
 
 ssh-keygen -t ed25519 -f "$KEY_PATH" -N ""
 ssh-copy-id -i "$KEY_PATH" "$ssh_host"
+
+echo
+echo "=============================================="
+echo "  IMPORTANT: After connecting to the server,  "
+echo "  disable root SSH login with the following: "
+echo "=============================================="
+echo
+echo "  sudo sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config"
+echo "  sudo systemctl restart sshd"
+echo
+echo "=============================================="
+echo
+
+ssh -i "$KEY_PATH" "$ssh_host"
