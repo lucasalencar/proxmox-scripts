@@ -28,6 +28,20 @@ ssh-keygen -t ed25519 -f "$KEY_PATH" -N ""
 # Copy the public key to the remote server
 ssh-copy-id -i "$KEY_PATH" "$ssh_host"
 
+# Add SSH config entries if not already present
+# This allows 'ssh proxmox' to connect automatically
+if ! grep -q "IdentityFile ~/.ssh/proxmox" ~/.ssh/config 2>/dev/null; then
+  cat >> ~/.ssh/config << 'EOF'
+
+Host proxmox
+    HostName SERVER_IP
+    User lucas
+    IdentityFile ~/.ssh/proxmox
+EOF
+  sed -i '' "s/SERVER_IP/$server_ip/" ~/.ssh/config
+  echo "SSH config updated at ~/.ssh/config"
+fi
+
 # Display instructions for securing the server
 echo
 echo "=============================================="
