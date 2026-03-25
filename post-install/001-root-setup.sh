@@ -6,6 +6,7 @@ if [[ "$(whoami)" != "root" ]]; then
 fi
 
 # Post install script from community
+# https://community-scripts.org/scripts/post-pve-install
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/post-pve-install.sh)"
 
 apt update
