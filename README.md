@@ -4,8 +4,8 @@ Repository of scripts to automate Proxmox server setup.
 
 ## Scripts Overview
 
-### post-install/001-create-user.sh
-Run on Proxmox server as root. Creates a user account with sudo privileges for SSH access.
+### post-install/001-root-setup.sh
+Run on Proxmox server as root. Runs tteck's post-install script, then creates a user account with sudo privileges for SSH access.
 
 ### post-install/002-ssh-generate-key.sh
 Run on your local computer. Generates an SSH key and configures passwordless authentication to the Proxmox server.
@@ -15,10 +15,10 @@ Run on your local computer. Generates an SSH key and configures passwordless aut
 ### Step 1: On Proxmox Server (as root)
 
 ```bash
-# Upload and run the create user script
-scp 001-create-user.sh root@<proxmox-ip>:/tmp/
+# Upload and run the root setup script
+scp post-install/001-root-setup.sh root@<proxmox-ip>:/tmp/
 ssh root@<proxmox-ip>
-bash /tmp/001-create-user.sh
+bash /tmp/001-root-setup.sh
 ```
 
 ### Step 2: On Your Computer (as your user)

@@ -5,6 +5,9 @@ if [[ "$(whoami)" != "root" ]]; then
   exit 1
 fi
 
+# Post install script from community
+bash -c "$(wget -qLO - https://github.com/tteck/Proxmox/raw/main/misc/post-pve-install.sh)"
+
 apt update
 
 # Create user for ssh access
