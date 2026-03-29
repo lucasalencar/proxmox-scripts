@@ -27,7 +27,7 @@ Run on Proxmox server as root. Maps host datasets to a specific LXC container us
 # Upload and run the root setup script
 scp post-install/001-root-setup.sh root@<proxmox-ip>:/tmp/
 ssh root@<proxmox-ip>
-bash /tmp/001-root-setup.sh
+bash /tmp/001-root-setup.sh <your-username>
 # Reboot when prompted
 ```
 
