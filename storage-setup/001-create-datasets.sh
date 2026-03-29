@@ -10,7 +10,7 @@ zfs create tank/data/media # Movies and Series
 zfs create tank/data/memorias # Personal photos and videos
 
 echo "Creating media organization folders..."
-mkdir -p /tank/data/media/filmes /tank/data/media/series
+mkdir -p /tank/data/media/Filmes /tank/data/media/Series
 
 echo "Setting up directory permissions (UID 100000 for LXC)..."
 chown -R 100000:100000 /tank/data
