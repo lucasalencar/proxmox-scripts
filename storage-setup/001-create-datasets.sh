@@ -8,6 +8,7 @@ echo "Creating ZFS datasets (tank/data, media, memorias)..."
 zfs create tank/data # Main
 zfs create tank/data/media # Movies and Series
 zfs create tank/data/memorias # Personal photos and videos
+zfs create tank/data/documents
 
 echo "Creating media organization folders..."
 mkdir -p /tank/data/media/Filmes /tank/data/media/Series

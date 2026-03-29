@@ -28,4 +28,8 @@ pct set "$container_id" -mp1 /tank/data/memorias,mp=/DATA/Gallery
 echo "Setting up mount: /tank/data/media -> /DATA/Media (mp2)"
 pct set "$container_id" -mp2 /tank/data/media,mp=/DATA/Media
 
+echo "Setting up mount: /tank/data/documents -> /DATA/Documents (mp3)"
+pct set "$container_id" -mp3 /tank/data/documents,mp=/DATA/Documents
+
+
 echo "Configuration completed for container $container_id."
