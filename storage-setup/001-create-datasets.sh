@@ -4,17 +4,17 @@
 # and sets up permissions (UID 100000) so Proxmox containers (LXC) can
 # read and write to files natively, ensuring performance and isolation.
 
-# Datasets controlled by ZFS
+echo "Creating ZFS datasets (tank/data, media, memorias)..."
 zfs create tank/data # Main
 zfs create tank/data/media # Movies and Series
 zfs create tank/data/memorias # Personal photos and videos
 
-# Create media organization folders
+echo "Creating media organization folders..."
 mkdir -p /tank/data/media/filmes /tank/data/media/series
 
-# Setup dir permissions
-chown -R 100000:100000 /tank/data # Change ownership to default containers user
+echo "Setting up directory permissions (UID 100000 for LXC)..."
+chown -R 100000:100000 /tank/data
 chmod -R 775 /tank/data
 
-# List all created datasets
+echo "Storage setup complete. Current datasets:"
 zfs list
