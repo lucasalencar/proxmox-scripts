@@ -21,6 +21,22 @@ fi
 
 echo "Identified Container ID: $container_id"
 
+# Configure UID/GID mapping for UID 1000 synchronization
+CONF_FILE="/etc/pve/lxc/${container_id}.conf"
+if ! grep -q "lxc.idmap" "$CONF_FILE"; then
+    echo "Injecting UID/GID mapping into $CONF_FILE..."
+    cat <<EOF >> "$CONF_FILE"
+
+# UID Mapping for User 1000
+lxc.idmap: u 0 100000 1000
+lxc.idmap: g 0 100000 1000
+lxc.idmap: u 1000 1000 1
+lxc.idmap: g 1000 1000 1
+lxc.idmap: u 1001 101001 64535
+lxc.idmap: g 1001 101001 64535
+EOF
+fi
+
 # Perform bind mounts
 echo "Setting up mount: /tank/data/memorias -> /DATA/Gallery (mp1)"
 pct set "$container_id" -mp1 /tank/data/memorias,mp=/DATA/Gallery
@@ -31,5 +47,8 @@ pct set "$container_id" -mp2 /tank/data/media,mp=/DATA/Media
 echo "Setting up mount: /tank/data/documents -> /DATA/Documents (mp3)"
 pct set "$container_id" -mp3 /tank/data/documents,mp=/DATA/Documents
 
+# Restart container to apply the new mapping configuration
+echo "Restarting container $container_id to apply UID mapping..."
+pct stop "$container_id" && pct start "$container_id"
 
 echo "Configuration completed for container $container_id."
