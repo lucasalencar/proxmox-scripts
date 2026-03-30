@@ -7,42 +7,41 @@ get_container_id_by_name() {
     if [ -z "$name" ]; then
         return 1
     fi
-    # Search in pct list, sort by ID and take the highest one if multiple exist
     pct list | grep -i "$name" | sort -n | tail -1 | awk '{print $1}'
 }
 
-# Configures UID/GID mapping for UID 1000 synchronization ('1000 Club')
-# Usage: setup_lxc_uid_mapping <container_id>
-setup_lxc_uid_mapping() {
-    local container_id="$1"
-    local conf_file="/etc/pve/lxc/${container_id}.conf"
+# Configures ADVANCED UID/GID mapping for specific internal ID to host 1000
+# Usage: setup_lxc_advanced_mapping <container_id> <internal_id>
+setup_lxc_advanced_mapping() {
+    local id="$1"
+    local int_id="$2"
+    local conf_file="/etc/pve/lxc/${id}.conf"
+    local host_id=1000
 
-    if [ -z "$container_id" ]; then
-        echo "Error: Container ID is required for UID mapping."
+    if [ -z "$id" ] || [ -z "$int_id" ]; then
+        echo "Error: Container ID and Internal UID are required."
         return 1
     fi
 
-    if [ ! -f "$conf_file" ]; then
-        echo "Error: Configuration file $conf_file not found."
-        return 1
-    fi
+    echo "Configuring mapping: Container UID $int_id -> Host UID $host_id"
 
-    if ! grep -q "lxc.idmap" "$conf_file"; then
-        echo "Injecting UID/GID mapping into $conf_file..."
-        cat <<EOF >> "$conf_file"
+    # Remove any existing idmap lines to avoid duplicates/conflicts
+    sed -i '/lxc.idmap/d' "$conf_file"
 
-# UID Mapping for User 1000
-lxc.idmap: u 0 100000 1000
-lxc.idmap: g 0 100000 1000
-lxc.idmap: u 1000 1000 1
-lxc.idmap: g 1000 1000 1
-lxc.idmap: u 1001 101001 64535
-lxc.idmap: g 1001 101001 64535
+    # Calculate ranges
+    local range1=$int_id
+    local range2_start=$((int_id + 1))
+    local range2_count=$((65536 - int_id - 1))
+
+    cat <<EOF >> "$conf_file"
+# UID Mapping: Container $int_id -> Host $host_id
+lxc.idmap: u 0 100000 $range1
+lxc.idmap: g 0 100000 $range1
+lxc.idmap: u $int_id $host_id 1
+lxc.idmap: g $int_id $host_id 1
+lxc.idmap: u $range2_start $((100000 + range2_start)) $range2_count
+lxc.idmap: g $range2_start $((100000 + range2_start)) $range2_count
 EOF
-        echo "UID mapping configured for container $container_id."
-        return 0
-    else
-        echo "UID mapping already exists for container $container_id."
-        return 0
-    fi
+
+    echo "Mapping injected into $conf_file."
 }

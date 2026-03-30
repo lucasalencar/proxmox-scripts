@@ -2,10 +2,27 @@
 
 Repository of scripts to automate Proxmox server setup.
 
+## UID Mapping Strategy (The '1000 Club')
+
+To ensure seamless data access between the Proxmox host and multiple LXC containers without "Permission Denied" errors, this project uses a custom **UID/GID mapping strategy**.
+
+### Why UID 1000?
+In Proxmox and most Linux distributions, the first unprivileged user created is assigned **UID 1000**. By mapping container users to this ID, files created by a container appear as owned by the host user, and vice versa. This allows you to manage your media files via SMB/SFTP on the host while containers access them natively.
+
+### Supported Scenarios:
+1.  **Container running as Root (UID 0):**
+    - **Example:** CasaOS.
+    - **Mapping:** Container `0` -> Host `1000`.
+    - **Usage:** Everything CasaOS or its Docker apps do is "seen" by the host as being done by your primary user.
+2.  **Container running as Specific User (UID 105, etc.):**
+    - **Example:** Jellyfin (runs as internal user `jellyfin`).
+    - **Mapping:** Container `105` -> Host `1000`.
+    - **Usage:** Jellyfin can read/write to your media folders as if it were your host user, while keeping system files isolated.
+
 ## Scripts Overview
 
 ### post-install/001-root-setup.sh
-Run on Proxmox server as root. Runs tteck's post-install script, then creates a user account with sudo privileges for SSH access.
+Run on Proxmox server as root. Runs tteck's post-install script, creates a user account with **UID 1000**, and authorizes the host to map this ID to LXC containers.
 
 ### post-install/002-enable-intel-iommu.sh
 Run on Proxmox server as root. Enables IOMMU for PCIe passthrough (Intel processors).
@@ -14,7 +31,7 @@ Run on Proxmox server as root. Enables IOMMU for PCIe passthrough (Intel process
 Run on your local computer. Generates an SSH key and configures passwordless authentication to the Proxmox server.
 
 ### storage-setup/001-create-datasets.sh
-Run on Proxmox server as root. Creates the ZFS storage structure on the `tank` pool, organizes media folders, and sets correct permissions (UID 100000) for unprivileged LXC containers.
+Run on Proxmox server as root. Creates the ZFS storage structure on the `tank` pool, organizes media folders, and sets correct permissions (**UID/GID 1000**) for synchronized access.
 
 ### storage-setup/002-bind-mount-datasets.sh
 Run on Proxmox server as root. Maps host datasets to a specific LXC container using Bind Mounts. Maps `/tank/data` as default (`mp0`) and supports additional sub-datasets as optional arguments.
