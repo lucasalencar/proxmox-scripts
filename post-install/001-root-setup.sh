@@ -22,12 +22,16 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/Proxmo
 echo "Updating system packages..."
 apt update
 
-# Create user for ssh access if it doesn't exist
+# Create user for ssh access if it doesn't exist (Targeting UID 1000)
 if id "$SSH_USER" &>/dev/null; then
     echo "User $SSH_USER already exists."
+    CURRENT_UID=$(id -u "$SSH_USER")
+    if [ "$CURRENT_UID" != "1000" ]; then
+        echo "Warning: User $SSH_USER exists but has UID $CURRENT_UID instead of 1000."
+    fi
 else
-    echo "Creating user $SSH_USER..."
-    adduser "$SSH_USER"
+    echo "Creating user $SSH_USER with UID 1000..."
+    adduser --uid 1000 "$SSH_USER"
 fi
 
 # Grant sudo powers
@@ -36,15 +40,17 @@ apt install sudo vim -y
 echo "Adding $SSH_USER to sudo group..."
 usermod -aG sudo "$SSH_USER"
 
-# Register group to manage container data (UID 100000)
-if ! getent group lxc-data > /dev/null; then
-    echo "Creating lxc-data group (GID 100000)..."
-    groupadd -g 100000 lxc-data
+# Configure SubUID/SubGID mapping for LXC UID Mapping (UID 1000)
+echo "Configuring SubUID/SubGID mapping for UID 1000..."
+if ! grep -q "root:1000:1" /etc/subuid; then
+    echo "root:1000:1" >> /etc/subuid
 fi
-
-echo "Adding $SSH_USER to lxc-data group..."
-usermod -aG lxc-data "$SSH_USER"
+if ! grep -q "root:1000:1" /etc/subgid; then
+    echo "root:1000:1" >> /etc/subgid
+fi
 
 echo ""
 echo "Setup complete!"
+echo "User '$SSH_USER' is now set as the primary data owner (UID 1000)."
+echo "Proxmox is authorized to map this UID for LXC containers."
 echo "Now run 'ssh-generate-key.sh' on your personal computer to setup SSH keys for: $SSH_USER"
