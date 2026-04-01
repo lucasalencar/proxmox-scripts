@@ -60,13 +60,30 @@ fix_lxc_internal_permissions() {
     shift
     local paths=("$@")
 
+    echo "Ensuring container $id is fully stopped..."
+    pct stop "$id" 2>/dev/null
+    while [ "$(pct status "$id")" != "status: stopped" ]; do
+        echo "Waiting for container $id to stop..."
+        sleep 2
+    done
+
     echo "Mounting container $id rootfs to fix permissions..."
-    # pct mount returns the mount point path
-    local mount_path=$(pct mount "$id" | awk '{print $NF}')
+    # Attempt to mount and capture the path
+    local mount_output
+    mount_output=$(pct mount "$id" 2>&1)
+    local mount_path
+    mount_path=$(echo "$mount_output" | grep -o '/[^ ]*rootfs' | head -1)
 
     if [ -z "$mount_path" ] || [ ! -d "$mount_path" ]; then
-        echo "Error: Could not mount container $id rootfs."
-        return 1
+        # Fallback: check if it's already mounted
+        mount_path="/var/lib/lxc/$id/rootfs"
+        if [ ! -d "$mount_path" ]; then
+            echo "Error: Could not determine mount path. Output: $mount_output"
+            return 1
+        fi
+        echo "Container already mounted at $mount_path"
+    else
+        echo "Container mounted at $mount_path"
     fi
 
     for path in "${paths[@]}"; do
@@ -80,5 +97,5 @@ fix_lxc_internal_permissions() {
     done
 
     echo "Unmounting container $id..."
-    pct unmount "$id"
+    pct unmount "$id" 2>/dev/null || true
 }
