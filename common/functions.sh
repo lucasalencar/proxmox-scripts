@@ -50,3 +50,35 @@ EOF
 
     echo "Mapping injected into $conf_file."
 }
+
+# Fixes internal container permissions from the Host level using pct mount
+# Usage: fix_lxc_internal_permissions <container_id> <path1> <path2> ...
+fix_lxc_internal_permissions() {
+    local id="$1"
+    local host_uid=1000
+    local host_gid=1000
+    shift
+    local paths=("$@")
+
+    echo "Mounting container $id rootfs to fix permissions..."
+    # pct mount returns the mount point path
+    local mount_path=$(pct mount "$id" | awk '{print $NF}')
+
+    if [ -z "$mount_path" ] || [ ! -d "$mount_path" ]; then
+        echo "Error: Could not mount container $id rootfs."
+        return 1
+    fi
+
+    for path in "${paths[@]}"; do
+        local full_path="${mount_path}${path}"
+        if [ -d "$full_path" ]; then
+            echo "Fixing permissions for $full_path (Host UID $host_uid)..."
+            chown -R "$host_uid":"$host_gid" "$full_path"
+        else
+            echo "Warning: Path $full_path not found inside container."
+        fi
+    done
+
+    echo "Unmounting container $id..."
+    pct unmount "$id"
+}
