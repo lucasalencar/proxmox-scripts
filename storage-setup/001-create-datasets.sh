@@ -12,6 +12,15 @@ zfs create tank/data/documents
 # Ensure all datasets are mounted before applying permissions
 zfs mount -a
 
+echo "Setting up media ZFS dataset"
+zfs set recordsize=1M tank/data/media # set recordsize to 1M to optimize disk storage performance
+
+echo "Setting up memorias ZFS dataset"
+# Command to get current recordsize: `zfs get recordsize tank/data/memorias`
+zfs set recordsize=1M tank/data/memorias # set recordsize to 1M to optimize disk storage performance
+# Command to get current atime: zfs get atime /tank/data/memorias
+zfs set atime=off tank/data/memorias # turn off to avoid updating metadata of file access
+
 echo "Creating media organization folders..."
 mkdir -p /tank/data/media/Filmes /tank/data/media/Series
 
