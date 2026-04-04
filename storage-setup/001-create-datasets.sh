@@ -28,7 +28,7 @@ echo "Setting up documents ZFS dataset"
 zfs set atime=off tank/data/documents
 
 echo "Creating media organization folders..."
-mkdir -p /tank/data/media/Filmes /tank/data/media/Series
+mkdir -p /tank/data/media/Movies /tank/data/media/Series /tank/data/media/Music
 
 echo "Setting up directory permissions (UID/GID 1000 for '1000 Club')..."
 # Permissions must be applied AFTER datasets are mounted to persist across mountpoints
