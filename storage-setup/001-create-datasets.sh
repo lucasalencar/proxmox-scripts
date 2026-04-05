@@ -2,17 +2,16 @@
 # This script automates the creation of the storage structure on the ZFS Pool 'tank'.
 # It creates the main datasets for media and memories, organizes subfolders,
 # and sets up permissions (UID/GID 1000) for both host user and LXC containers.
-# Load helper functions
+
 source "$(dirname "$0")/../common/functions.sh"
 
 # Load primary user
 PRIMARY_USER=$(get_primary_user) || exit 1
 
-echo "Creating main ZFS datasets (tank/data, media, memorias, documents)..."
+echo "Creating main ZFS datasets (tank/data, media, memorias)..."
 zfs create tank/data
 zfs create tank/data/media
 zfs create tank/data/memorias
-zfs create tank/data/documents
 
 # Call generic user dataset creation script for primary user
 echo "Creating primary user dataset: $PRIMARY_USER..."
