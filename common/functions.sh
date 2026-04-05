@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Returns the primary username from .primary_user file
+get_primary_user() {
+    local script_dir
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    local primary_user_file="$script_dir/../.primary_user"
+
+    if [ ! -f "$primary_user_file" ]; then
+        echo "Error: .primary_user file not found. Run 001-root-setup.sh first." >&2
+        return 1
+    fi
+
+    cat "$primary_user_file"
+}
+
 # Returns the container ID by its name (partial match, case-insensitive)
 # Usage: get_container_id_by_name "name"
 get_container_id_by_name() {

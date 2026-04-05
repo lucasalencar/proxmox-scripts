@@ -34,6 +34,10 @@ else
     adduser --uid 1000 "$SSH_USER"
 fi
 
+# Save primary user for other scripts
+echo "Persisting primary user '$SSH_USER' to .primary_user..."
+echo "$SSH_USER" > "$(dirname "$0")/../.primary_user"
+
 # Grant sudo powers
 echo "Installing sudo and vim..."
 apt install sudo vim -y
