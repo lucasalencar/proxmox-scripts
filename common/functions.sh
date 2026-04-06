@@ -65,8 +65,12 @@ setup_dataset_acls() {
     zfs set acltype=posixacl "$dataset"
     zfs set xattr=sa "$dataset"
 
-    echo "Applying ACLs to $path (Owner UID $owner_uid)..."
+    echo "Setting ownership to $owner_uid and applying ACLs to $path..."
+    chown -R "$owner_uid":1000 "$path"
+    chmod 2770 "$path"
+
     # Clear existing ACLs
+
     setfacl -bnR "$path"
 
     # Define ACL string starting with owner and group
