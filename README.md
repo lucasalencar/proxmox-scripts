@@ -14,7 +14,6 @@ Repository of scripts to automate Proxmox server setup, storage configuration, a
 ### Storage Configuration (`storage-setup/`)
 *   **001-create-datasets.sh**: Creates ZFS structure on `tank` pool (`media`, `memorias`, etc.) with correct permissions.
 *   **002-exfat-external-drive.sh**: Installs `exfatprogs` for external drive support.
-*   **create-user-dataset.sh**: Creates a private ZFS dataset for a specific user under `/tank/data/<user>`.
 
 ### Service Installation
 Each service folder contains an `install.sh` that automates:
@@ -22,6 +21,11 @@ Each service folder contains an `install.sh` that automates:
 2.  Discovering the Container ID.
 3.  Configuring ZFS ACLs for the service user.
 4.  Performing **Bind Mounts** from the host datasets to the container.
+
+### Service Updates
+Some services include an `update.sh` to keep them up to date via the host CLI:
+*   **casa-os/update.sh**: Runs `apt update && apt upgrade` and the official CasaOS update script inside the container.
+*   **jellyfin/update.sh**: Updates the Jellyfin container and its specific packages.
 
 *   **casa-os/**: Installs CasaOS LXC and mounts Media, Gallery, and Documents.
 *   **jellyfin/**: Installs Jellyfin LXC, configures ACLs, and mounts Media.
