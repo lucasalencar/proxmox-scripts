@@ -38,6 +38,16 @@ fi
 echo "Persisting primary user '$SSH_USER' to .primary_user..."
 echo "$SSH_USER" > "$(dirname "$0")/../.primary_user"
 
+# Rename GID 1000 to 'familia' for shared access
+CURRENT_GROUP_NAME=$(getent group 1000 | cut -d: -f1)
+if [ -n "$CURRENT_GROUP_NAME" ] && [ "$CURRENT_GROUP_NAME" != "familia" ]; then
+    echo "Renaming group 1000 ('$CURRENT_GROUP_NAME') to 'familia'..."
+    groupmod -n familia "$CURRENT_GROUP_NAME"
+elif [ -z "$CURRENT_GROUP_NAME" ]; then
+    echo "Group 1000 not found. Creating 'familia' group with GID 1000..."
+    groupadd --gid 1000 familia
+fi
+
 # Grant sudo powers and ACL support
 echo "Installing sudo, vim and acl..."
 apt install sudo vim acl -y

@@ -22,23 +22,25 @@ PRIMARY_USER=$(get_primary_user) || exit 1
 
 echo "Setting up secondary user '$SECONDARY_USER' (Primary: $PRIMARY_USER)..."
 
-# Rename GID 1000 to 'familia' for shared access (Lazy migration)
-CURRENT_GROUP_NAME=$(getent group 1000 | cut -d: -f1)
-if [ "$CURRENT_GROUP_NAME" != "familia" ]; then
-    echo "First secondary user detected. Renaming group 1000 ('$CURRENT_GROUP_NAME') to 'familia'..."
-    groupmod -n familia "$CURRENT_GROUP_NAME"
-fi
-
-# Create user with UID 1001
+# 1. Create user with next available UID
 if id "$SECONDARY_USER" &>/dev/null; then
     echo "User $SECONDARY_USER already exists."
+    SECONDARY_UID=$(id -u "$SECONDARY_USER")
 else
-    echo "Creating user $SECONDARY_USER with UID 1001..."
-    adduser --uid 1001 --shell /usr/sbin/nologin --disabled-password --gecos "" "$SECONDARY_USER"
+    echo "Creating user $SECONDARY_USER..."
+    # adduser will automatically pick the next UID >= 1001
+    adduser --shell /usr/sbin/nologin --disabled-password --gecos "" "$SECONDARY_USER"
+    SECONDARY_UID=$(id -u "$SECONDARY_USER")
 fi
 
-# Ensure user is in 'familia' group (GID 1000)
-echo "Adding $SECONDARY_USER to group 'familia'..."
-usermod -aG familia "$SECONDARY_USER"
+# 2. Grant access to shared datasets using ACLs
+# This ensures the secondary user can read/write shared data
+# without needing complex group permissions.
+echo "Granting $SECONDARY_USER (UID $SECONDARY_UID) access to shared datasets..."
+add_dataset_acl "/tank/data/media" "$SECONDARY_UID"
+add_dataset_acl "/tank/data/memorias" "$SECONDARY_UID"
 
-echo "Secondary user setup complete!"
+echo ""
+echo "Secondary user setup complete! Access granted to media and memories datasets."
+echo "Note: If a private dataset is needed for $SECONDARY_USER, run:"
+echo "  ./storage-setup/create-user-dataset.sh $SECONDARY_USER"
