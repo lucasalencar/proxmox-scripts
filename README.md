@@ -1,44 +1,35 @@
 # Proxmox Scripts
 
-Repository of scripts to automate Proxmox server setup.
-
-## UID Mapping Strategy (The '1000 Club')
-
-To ensure seamless data access between the Proxmox host and multiple LXC containers without "Permission Denied" errors, this project uses a custom **UID/GID mapping strategy**.
-
-### Why UID 1000?
-In Proxmox and most Linux distributions, the first unprivileged user created is assigned **UID 1000**. By mapping container users to this ID, files created by a container appear as owned by the host user, and vice versa. This allows you to manage your media files via SMB/SFTP on the host while containers access them natively.
-
-### Supported Scenarios:
-1.  **Container running as Root (UID 0):**
-    - **Example:** CasaOS.
-    - **Mapping:** Container `0` -> Host `1000`.
-    - **Usage:** Everything CasaOS or its Docker apps do is "seen" by the host as being done by your primary user.
-2.  **Container running as Specific User (UID 105, etc.):**
-    - **Example:** Jellyfin (runs as internal user `jellyfin`).
-    - **Mapping:** Container `105` -> Host `1000`.
-    - **Usage:** Jellyfin can read/write to your media folders as if it were your host user, while keeping system files isolated.
+Repository of scripts to automate Proxmox server setup, storage configuration, and service installation (LXC/VM).
 
 ## Scripts Overview
 
-### post-install/001-root-setup.sh
-Run on Proxmox server as root. Runs tteck's post-install script, creates a user account with **UID 1000**, and authorizes the host to map this ID to LXC containers.
+### Host Setup (`post-install/`)
+*   **001-root-setup.sh**: Run on Proxmox as root. Runs tteck's post-install, creates a primary user (UID 1000), and sets up mapping permissions.
+*   **002-enable-intel-iommu.sh**: Enables IOMMU for PCIe passthrough (Intel).
+*   **003-ssh-generate-key.sh**: Run locally. Configures passwordless SSH to the server.
+*   **004-useful-commands.sh**: Installs monitoring tools (`htop`, `btop`, `iotop`, `sysstat`).
+*   **005-add-secondary-user.sh**: Adds an additional unprivileged user to the system.
 
-### post-install/002-enable-intel-iommu.sh
-Run on Proxmox server as root. Enables IOMMU for PCIe passthrough (Intel processors).
+### Storage Configuration (`storage-setup/`)
+*   **001-create-datasets.sh**: Creates ZFS structure on `tank` pool (`media`, `memorias`, etc.) with correct permissions.
+*   **002-exfat-external-drive.sh**: Installs `exfatprogs` for external drive support.
+*   **create-user-dataset.sh**: Creates a private ZFS dataset for a specific user under `/tank/data/<user>`.
 
-### post-install/003-ssh-generate-key.sh
-Run on your local computer. Generates an SSH key and configures passwordless authentication to the Proxmox server.
+### Service Installation
+Each service folder contains an `install.sh` that automates:
+1.  Downloading/Running the community install script.
+2.  Discovering the Container ID.
+3.  Configuring ZFS ACLs for the service user.
+4.  Performing **Bind Mounts** from the host datasets to the container.
 
-### storage-setup/001-create-datasets.sh
-Run on Proxmox server as root. Creates the ZFS storage structure on the `tank` pool, organizes media folders, and sets correct permissions (**UID/GID 1000**) for synchronized access.
-
-### storage-setup/002-bind-mount-datasets.sh
-Run on Proxmox server as root. Maps host datasets to a specific LXC container using Bind Mounts. Maps `/tank/data` as default (`mp0`) and supports additional sub-datasets as optional arguments.
+*   **casa-os/**: Installs CasaOS LXC and mounts Media, Gallery, and Documents.
+*   **jellyfin/**: Installs Jellyfin LXC, configures ACLs, and mounts Media.
+*   **home-assistant-os/**: Installs Home Assistant OS as a VM.
 
 ## Setup Order
 
-### Step 1: On Proxmox Server (as root)
+### Step 1: Base Host Setup (as root)
 
 ```bash
 # Upload and run the root setup script
@@ -48,46 +39,39 @@ bash /tmp/001-root-setup.sh <your-username>
 # Reboot when prompted
 ```
 
-### Step 2: (Optional) Enable IOMMU for PCIe passthrough
+### Step 2: Local SSH Config (from your computer)
 
 ```bash
-scp post-install/002-enable-intel-iommu.sh root@<proxmox-ip>:/tmp/
-ssh root@<proxmox-ip>
-bash /tmp/002-enable-intel-iommu.sh
-# Reboot when prompted
-```
-
-### Step 3: Storage Configuration
-
-```bash
-# Create ZFS datasets and set permissions
-scp storage-setup/001-create-datasets.sh root@<proxmox-ip>:/tmp/
-ssh root@<proxmox-ip>
-bash /tmp/001-create-datasets.sh
-
-# Bind datasets to a container (e.g., VMID 101 with media and memorias)
-scp storage-setup/002-bind-mount-datasets.sh root@<proxmox-ip>:/tmp/
-ssh root@<proxmox-ip>
-bash /tmp/002-bind-mount-datasets.sh 101 media memorias
-```
-
-### Step 4: On Your Computer (as your user)
-
-```bash
-# Option A: Create config file (recommended for recurring use)
+# Option A: Create config file
 cp proxmox_config.example ~/.proxmox_config
-# Edit ~/.proxmox_config and set your PROXMOX_SERVER_IP
+# Edit ~/.proxmox_config with your IP and username
 
-# Option B: Pass IP as argument
-./post-install/003-ssh-generate-key.sh <proxmox-ip>
-
-# Or just run with config
+# Run the key generator
 ./post-install/003-ssh-generate-key.sh
+```
+
+### Step 3: Storage and Utilities
+
+```bash
+# Run on Proxmox as root
+./storage-setup/001-create-datasets.sh
+./post-install/004-useful-commands.sh
+```
+
+### Step 4: Installing Services
+
+You can now install services which will automatically mount the previously created datasets:
+
+```bash
+# On Proxmox as root
+./casa-os/install.sh
+./jellyfin/install.sh
+./home-assistant-os/install.sh
 ```
 
 ## Configuration
 
-Edit `~/.proxmox_config` to customize:
+Edit `~/.proxmox_config` (on your local machine) or `proxmox_config.example` to customize:
 
 ```bash
 PROXMOX_SERVER_IP="192.168.1.100"     # Your Proxmox server IP
