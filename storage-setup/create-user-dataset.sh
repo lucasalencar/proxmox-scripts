@@ -34,9 +34,13 @@ zfs mount "tank/data/$TARGET_USER" 2>/dev/null || true
 echo "Setting up $TARGET_USER ZFS dataset"
 zfs set atime=off "tank/data/$TARGET_USER"
 
-# Apply ownership and private permissions
-echo "Applying private permissions (Owner:$TARGET_USER, Group:1000, Perms:700) to /tank/data/$TARGET_USER..."
-chown "$TARGET_USER":1000 "/tank/data/$TARGET_USER"
+# Apply ownership and private permissions using ACLs
+USER_UID=$(id -u "$TARGET_USER")
+echo "Applying private ACLs (Owner UID $USER_UID) to /tank/data/$TARGET_USER..."
+source "$(dirname "$0")/../common/functions.sh"
+setup_dataset_acls "tank/data/$TARGET_USER" "/tank/data/$TARGET_USER" "$USER_UID"
+
+# Secondary reinforcement for legacy apps
 chmod 700 "/tank/data/$TARGET_USER"
 
 echo "Private ZFS dataset for $TARGET_USER setup complete!"

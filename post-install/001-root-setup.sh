@@ -38,9 +38,9 @@ fi
 echo "Persisting primary user '$SSH_USER' to .primary_user..."
 echo "$SSH_USER" > "$(dirname "$0")/../.primary_user"
 
-# Grant sudo powers
-echo "Installing sudo and vim..."
-apt install sudo vim -y
+# Grant sudo powers and ACL support
+echo "Installing sudo, vim and acl..."
+apt install sudo vim acl -y
 echo "Adding $SSH_USER to sudo group..."
 usermod -aG sudo "$SSH_USER"
 

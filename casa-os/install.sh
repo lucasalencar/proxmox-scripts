@@ -18,15 +18,27 @@ fi
 
 echo "Identified Container ID: $container_id"
 
-# Fetch Primary User for storage mapping
+# 2. DISCOVER Primary User for reference
 PRIMARY_USER=$(get_primary_user) || exit 1
-echo "Primary User for storage mapping: $PRIMARY_USER"
+echo "Primary User reference: $PRIMARY_USER"
 
-# 2. CONFIGURE mapping for CasaOS Root (UID 0, GID 0) to Host UID/GID 1000
-# CasaOS runs as root (0/0), so we map 0 to our host's 1000.
-setup_lxc_advanced_mapping "$container_id" 0 0
+# 3. DISCOVER internal UID of the root user (or whoever runs CasaOS)
+# Although usually 0, we discover it dynamically for consistency.
+internal_uid=$(pct exec "$container_id" -- id -u root)
+host_casaos_uid=$((internal_uid + 100000))
 
-# 3. Perform bind mounts
+echo "CasaOS internal UID: $internal_uid -> Host UID: $host_casaos_uid"
+
+# 4. APPLY ACLs for CasaOS on the mounted datasets
+# This ensures CasaOS has full access to shared and private folders
+echo "Granting CasaOS (UID $host_casaos_uid) access to datasets..."
+add_dataset_acl "/tank/data/media" "$host_casaos_uid"
+add_dataset_acl "/tank/data/memorias" "$host_casaos_uid"
+add_dataset_acl "/tank/data/$PRIMARY_USER" "$host_casaos_uid"
+
+# 5. Perform bind mounts
+# As CasaOS runs as root inside the container (UID 100000 on host),
+# it will have full access because we gave UID 100000 access to /tank/data via ACLs.
 echo "Setting up mount: /tank/data/memorias -> /DATA/Gallery (mp1)"
 pct set "$container_id" -mp1 /tank/data/memorias,mp=/DATA/Gallery
 
@@ -36,8 +48,4 @@ pct set "$container_id" -mp2 /tank/data/media,mp=/DATA/Media
 echo "Setting up mount: /tank/data/$PRIMARY_USER -> /DATA/Documents (mp3)"
 pct set "$container_id" -mp3 "/tank/data/$PRIMARY_USER,mp=/DATA/Documents"
 
-# 4. Restart container to apply the new mapping configuration
-echo "Restarting container $container_id to apply UID/GID mapping..."
-pct stop "$container_id" && pct start "$container_id"
-
-echo "Installation and UID/GID Mapping completed for CasaOS (ID: $container_id)."
+echo "Installation and Bind Mounts completed for CasaOS (ID: $container_id)."

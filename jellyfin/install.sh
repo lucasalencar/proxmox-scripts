@@ -4,51 +4,55 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/functions.sh"
 
-echo "Starting Jellyfin installation via LXC container..."
+echo "Starting Jellyfin installation/configuration via LXC container..."
 
-# 1. Install via Community Script
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/jellyfin.sh)"
-
+# 1. Check if Jellyfin already exists
 container_id=$(get_container_id_by_name "jellyfin")
 
 if [ -z "$container_id" ]; then
-    echo "Error: Could not find container 'jellyfin'."
+    echo "Jellyfin container not found. Running community installation script..."
+    bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/jellyfin.sh)"
+
+    # Get ID again after installation
+    container_id=$(get_container_id_by_name "jellyfin")
+else
+    echo "Jellyfin container already exists (ID: $container_id). Skipping installation, proceeding with configuration..."
+fi
+
+if [ -z "$container_id" ]; then
+    echo "Error: Could not find or create container 'jellyfin'."
     exit 1
 fi
 
 echo "Identified Container ID: $container_id"
 
-# 2. DISCOVER internal UID and GID of the 'jellyfin' user
+# 2. DISCOVER internal UID of the 'jellyfin' user
 internal_uid=$(pct exec "$container_id" -- id -u jellyfin)
-internal_gid=$(pct exec "$container_id" -- id -g jellyfin)
 
-if [ -z "$internal_uid" ] || [ -z "$internal_gid" ]; then
+if [ -z "$internal_uid" ]; then
     echo "Error: Could not find user 'jellyfin' inside container."
     exit 1
 fi
 
-# 3. CONFIGURE Advanced UID/GID Mapping (Host Level)
-setup_lxc_advanced_mapping "$container_id" "$internal_uid" "$internal_gid"
+# Calculate corresponding host UID
+host_jellyfin_uid=$((internal_uid + 100000))
 
-# 4. FIX Internal Permissions (from Host Level using pct mount)
-echo "Stopping container $container_id to fix permissions..."
-pct stop "$container_id"
+echo "Jellyfin internal UID: $internal_uid -> Host UID: $host_jellyfin_uid"
 
-fix_lxc_internal_permissions "$container_id" \
-    "/var/lib/jellyfin" \
-    "/etc/jellyfin" \
-    "/var/log/jellyfin" \
-    "/var/cache/jellyfin"
+# 3. APPLY Specific ACLs for Jellyfin UID on Host
+# Grant access to media and memories datasets
+add_dataset_acl "/tank/data/media" "$host_jellyfin_uid"
+add_dataset_acl "/tank/data/memorias" "$host_jellyfin_uid"
 
-# 5. Perform bind mounts
+# 4. Perform bind mounts
 echo "Setting up mount: /tank/data/media -> /DATA/Media (mp1)"
 pct set "$container_id" -mp1 /tank/data/media,mp=/DATA/Media
 
 echo "Setting up mount: /tank/data/memorias -> /DATA/Gallery (mp2)"
 pct set "$container_id" -mp2 /tank/data/memorias,mp=/DATA/Gallery
 
-# 6. Restart container to apply the new mapping configuration
-echo "Starting container $container_id with correct UID/GID mapping..."
-pct start "$container_id"
+# 5. Restart container to ensure mounts are active
+echo "Restarting container $container_id..."
+pct stop "$container_id" && pct start "$container_id"
 
-echo "Installation and UID/GID Mapping completed for Jellyfin (ID: $container_id)."
+echo "Installation and ACL setup completed for Jellyfin (ID: $container_id)."

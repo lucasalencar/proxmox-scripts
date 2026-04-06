@@ -38,13 +38,13 @@ zfs set atime=off tank/data/documents
 echo "Creating media organization folders..."
 mkdir -p /tank/data/media/Movies /tank/data/media/Series /tank/data/media/Music
 
-echo "Setting up base directory permissions (Primary:$PRIMARY_USER, Group:1000)..."
-# Permissions must be applied AFTER datasets are mounted to persist across mountpoints
-# Setgid (2770) ensures that new files inherit the group 1000
-chown -R "$PRIMARY_USER":1000 /tank/data
-chmod -R 2770 /tank/data
+echo "Setting up ZFS ACLs for shared data (/tank/data)..."
+# Apply ACLs to the root of /tank/data for Host User (1000) and LXC Containers (100000)
+# Use owner UID 1000 and add 100000 as extra authorized user
+setup_dataset_acls tank/data /tank/data 1000 100000
 
 # Ensure primary user's private dataset has 700 (re-applying to be safe)
+# (In create-user-dataset.sh we will also update to use ACLs)
 chmod 700 "/tank/data/$PRIMARY_USER"
 
 echo "Storage setup complete. Current datasets:"

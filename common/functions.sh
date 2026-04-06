@@ -24,48 +24,60 @@ get_container_id_by_name() {
     pct list | grep -i "$name" | sort -n | tail -1 | awk '{print $1}'
 }
 
-# Configures ADVANCED UID/GID mapping for specific internal IDs to host 1000
-# Usage: setup_lxc_advanced_mapping <container_id> <internal_uid> [internal_gid]
-setup_lxc_advanced_mapping() {
-    local id="$1"
-    local int_uid="$2"
-    local int_gid="${3:-$int_uid}" # Default GID to UID if not provided
-    local conf_file="/etc/pve/lxc/${id}.conf"
-    local host_id=1000
+# Configures ZFS ACLs for specific users and enables inheritance
+# Usage: setup_dataset_acls <dataset_name> <mount_path> <owner_uid> [extra_uids...]
+setup_dataset_acls() {
+    local dataset="$1"
+    local path="$2"
+    local owner_uid="$3"
+    shift 3
+    local extra_uids=("$@")
 
-    if [ -z "$id" ] || [ -z "$int_uid" ]; then
-        echo "Error: Container ID and Internal UID are required."
-        return 1
-    fi
+    echo "Enabling ZFS POSIX ACLs on $dataset..."
+    zfs set acltype=posixacl "$dataset"
+    zfs set xattr=sa "$dataset"
 
-    echo "Configuring mapping: Container (U:$int_uid, G:$int_gid) -> Host 1000"
+    echo "Applying ACLs to $path (Owner UID $owner_uid)..."
+    # Clear existing ACLs
+    setfacl -bnR "$path"
 
-    # Remove any existing idmap lines to avoid duplicates/conflicts
-    sed -i '/lxc.idmap/d' "$conf_file"
+    # Define ACL string starting with owner and group
+    local acl_str="u::rwx,g::rwx,o::-,u:$owner_uid:rwx"
 
-    # --- UID Mapping (u) ---
-    local u_range1=$int_uid
-    local u_range2_start=$((int_uid + 1))
-    local u_range2_count=$((65536 - int_uid - 1))
+    for uid in "${extra_uids[@]}"; do
+        acl_str+=",u:$uid:rwx"
+    done
 
-    # --- GID Mapping (g) ---
-    local g_range1=$int_gid
-    local g_range2_start=$((int_gid + 1))
-    local g_range2_count=$((65536 - int_gid - 1))
+    # Apply access ACLs
+    setfacl -R -m "$acl_str" "$path"
 
-    cat <<EOF >> "$conf_file"
-lxc.idmap: u 0 100000 $u_range1
-lxc.idmap: u $int_uid $host_id 1
-lxc.idmap: u $u_range2_start $((100000 + u_range2_start)) $u_range2_count
-lxc.idmap: g 0 100000 $g_range1
-lxc.idmap: g $int_gid $host_id 1
-lxc.idmap: g $g_range2_start $((100000 + g_range2_start)) $g_range2_count
-EOF
+    # Apply default ACLs (for inheritance)
+    setfacl -R -d -m "$acl_str" "$path"
 
-    echo "Mapping injected into $conf_file."
+    # Ensure mask is correct
+    setfacl -R -m m::rwx "$path"
+    setfacl -R -d -m m::rwx "$path"
+
+    echo "ACLs applied to $path (U:$owner_uid, Extra:[${extra_uids[*]}])"
 }
 
-# Fixes internal container permissions from the Host level using pct mount
+# Appends a specific UID to existing ACLs of a path (both access and default)
+# Usage: add_dataset_acl <path> <uid>
+add_dataset_acl() {
+    local path="$1"
+    local uid="$2"
+
+    echo "Appending ACL for UID $uid to $path..."
+    # Access ACL
+    setfacl -R -m "u:$uid:rwx" "$path"
+    # Default ACL (for inheritance)
+    setfacl -R -d -m "u:$uid:rwx" "$path"
+    # Ensure mask is updated
+    setfacl -R -m m::rwx "$path"
+    setfacl -R -d -m m::rwx "$path"
+}
+
+# Fixes internal container permissions from the Host level
 # Usage: fix_lxc_internal_permissions <container_id> <path1> <path2> ...
 fix_lxc_internal_permissions() {
     local id="$1"
