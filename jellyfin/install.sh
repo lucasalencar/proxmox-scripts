@@ -6,26 +6,11 @@ source "$SCRIPT_DIR/../common/functions.sh"
 
 echo "Starting Jellyfin installation/configuration via LXC container..."
 
-# 1. Check if Jellyfin already exists
-container_id=$(get_container_id_by_name "jellyfin")
-
-if [ -z "$container_id" ]; then
-    echo "Jellyfin container not found. Running community installation script..."
-    bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/jellyfin.sh)"
-
-    # Get ID again after installation
-    container_id=$(get_container_id_by_name "jellyfin")
-else
-    echo "Jellyfin container already exists (ID: $container_id). Skipping installation, proceeding with configuration..."
-fi
-
-if [ -z "$container_id" ]; then
-    echo "Error: Could not find or create container 'jellyfin'."
-    exit 1
-fi
+# 1. Ensure Jellyfin is installed
+JELLYFIN_INSTALL_CMD='bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/jellyfin.sh)"'
+container_id=$(ensure_container_installed "jellyfin" "$JELLYFIN_INSTALL_CMD") || exit 1
 
 echo "Identified Container ID: $container_id"
-
 # 2. DISCOVER internal UID of the 'jellyfin' user
 internal_uid=$(pct exec "$container_id" -- id -u jellyfin)
 

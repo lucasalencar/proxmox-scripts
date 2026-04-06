@@ -6,26 +6,11 @@ source "$SCRIPT_DIR/../common/functions.sh"
 
 echo "Starting CasaOS installation/configuration via LXC container..."
 
-# 1. Check if CasaOS already exists
-container_id=$(get_container_id_by_name "casaos")
-
-if [ -z "$container_id" ]; then
-    echo "CasaOS container not found. Running community installation script..."
-    bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/casaos.sh)"
-
-    # Get ID again after installation
-    container_id=$(get_container_id_by_name "casaos")
-else
-    echo "CasaOS container already exists (ID: $container_id). Skipping installation, proceeding with configuration..."
-fi
-
-if [ -z "$container_id" ]; then
-    echo "Error: Could not find or create container 'casaos'."
-    exit 1
-fi
+# 1. Ensure CasaOS is installed
+CASAOS_INSTALL_CMD='bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/casaos.sh)"'
+container_id=$(ensure_container_installed "casaos" "$CASAOS_INSTALL_CMD") || exit 1
 
 echo "Identified Container ID: $container_id"
-
 # 2. DISCOVER Primary User for reference
 PRIMARY_USER=$(get_primary_user) || exit 1
 echo "Primary User reference: $PRIMARY_USER"

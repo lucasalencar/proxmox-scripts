@@ -14,6 +14,34 @@ get_primary_user() {
     cat "$primary_user_file"
 }
 
+# Ensures a container is installed, running a command if it's missing.
+# Returns the container ID.
+# Usage: ensure_container_installed "name" "install_command"
+ensure_container_installed() {
+    local name="$1"
+    local install_cmd="$2"
+    local container_id
+
+    container_id=$(get_container_id_by_name "$name")
+
+    if [ -z "$container_id" ]; then
+        echo "$name container not found. Running installation..."
+        bash -c "$install_cmd"
+
+        # Get ID again after installation
+        container_id=$(get_container_id_by_name "$name")
+    else
+        echo "$name container already exists (ID: $container_id). Skipping installation."
+    fi
+
+    if [ -z "$container_id" ]; then
+        echo "Error: Could not find or create container '$name'." >&2
+        return 1
+    fi
+
+    echo "$container_id"
+}
+
 # Returns the container ID by its name (partial match, case-insensitive)
 # Usage: get_container_id_by_name "name"
 get_container_id_by_name() {
