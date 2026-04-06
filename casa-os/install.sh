@@ -4,15 +4,23 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/functions.sh"
 
-echo "Starting CasaOS installation via LXC container..."
+echo "Starting CasaOS installation/configuration via LXC container..."
 
-# 1. Install via Community Script
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/casaos.sh)"
-
+# 1. Check if CasaOS already exists
 container_id=$(get_container_id_by_name "casaos")
 
 if [ -z "$container_id" ]; then
-    echo "Error: Could not find container 'casaos'."
+    echo "CasaOS container not found. Running community installation script..."
+    bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/casaos.sh)"
+
+    # Get ID again after installation
+    container_id=$(get_container_id_by_name "casaos")
+else
+    echo "CasaOS container already exists (ID: $container_id). Skipping installation, proceeding with configuration..."
+fi
+
+if [ -z "$container_id" ]; then
+    echo "Error: Could not find or create container 'casaos'."
     exit 1
 fi
 
