@@ -40,7 +40,4 @@ echo "Applying private ACLs (Owner UID $USER_UID) to /tank/data/$TARGET_USER..."
 source "$(dirname "$0")/../common/functions.sh"
 setup_dataset_acls "tank/data/$TARGET_USER" "/tank/data/$TARGET_USER" "$USER_UID"
 
-# Secondary reinforcement for legacy apps
-chmod 700 "/tank/data/$TARGET_USER"
-
 echo "Private ZFS dataset for $TARGET_USER setup complete!"
