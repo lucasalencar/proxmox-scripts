@@ -14,12 +14,27 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "Starting global update from $ROOT_DIR..."
 
-# Find all update.sh files in subdirectories
-# Exclude the root script itself if it has the same name
-UPDATE_SCRIPTS=$(find . -mindepth 2 -name "update.sh" | sort)
+# Find update scripts based on arguments or discovery
+if [ $# -gt 0 ]; then
+    echo "Updating specific packages: $@"
+    UPDATE_SCRIPTS=""
+    for pkg in "$@"; do
+        # Clean trailing slashes if any
+        pkg_clean="${pkg%/}"
+        if [ -f "./$pkg_clean/update.sh" ]; then
+            UPDATE_SCRIPTS="$UPDATE_SCRIPTS ./$pkg_clean/update.sh"
+        else
+            echo "Warning: No update script found for package '$pkg_clean' (./$pkg_clean/update.sh not found)."
+        fi
+    done
+else
+    echo "No packages specified. Discovering all update scripts..."
+    # Find all update.sh files in subdirectories (excluding root script)
+    UPDATE_SCRIPTS=$(find . -mindepth 2 -name "update.sh" | sort)
+fi
 
 if [ -z "$UPDATE_SCRIPTS" ]; then
-    echo "No update scripts found in subdirectories."
+    echo "No update scripts to execute."
     exit 0
 fi
 
