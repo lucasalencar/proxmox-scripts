@@ -27,6 +27,7 @@ echo "CasaOS internal UID: $internal_uid -> Host UID: $host_casaos_uid"
 echo "Granting CasaOS (UID $host_casaos_uid) access to datasets..."
 add_dataset_acl "/tank/data/media" "$host_casaos_uid"
 add_dataset_acl "/tank/data/memorias" "$host_casaos_uid"
+add_dataset_acl "/tank/data/downloads" "$host_casaos_uid"
 add_dataset_acl "/tank/data/$PRIMARY_USER" "$host_casaos_uid"
 
 # 5. Perform bind mounts
@@ -38,7 +39,10 @@ pct set "$container_id" -mp1 /tank/data/memorias,mp=/DATA/Gallery
 echo "Setting up mount: /tank/data/media -> /DATA/Media (mp2)"
 pct set "$container_id" -mp2 /tank/data/media,mp=/DATA/Media
 
-echo "Setting up mount: /tank/data/$PRIMARY_USER -> /DATA/Documents (mp3)"
-pct set "$container_id" -mp3 "/tank/data/$PRIMARY_USER,mp=/DATA/Documents"
+echo "Setting up mount: /tank/data/downloads -> /DATA/Downloads (mp3)"
+pct set "$container_id" -mp3 /tank/data/downloads,mp=/DATA/Downloads
+
+echo "Setting up mount: /tank/data/$PRIMARY_USER -> /DATA/Documents (mp4)"
+pct set "$container_id" -mp4 "/tank/data/$PRIMARY_USER,mp=/DATA/Documents"
 
 echo "Installation and Bind Mounts completed for CasaOS (ID: $container_id)."

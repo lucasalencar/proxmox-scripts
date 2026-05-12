@@ -8,10 +8,11 @@ source "$(dirname "$0")/../common/functions.sh"
 # Load primary user
 PRIMARY_USER=$(get_primary_user) || exit 1
 
-echo "Creating main ZFS datasets (tank/data, media, memorias)..."
+echo "Creating main ZFS datasets (tank/data, media, memorias, downloads)..."
 zfs create tank/data
 zfs create tank/data/media
 zfs create tank/data/memorias
+zfs create tank/data/downloads
 
 # Ensure all datasets are mounted before applying permissions
 zfs mount -a
@@ -25,6 +26,9 @@ zfs set recordsize=1M tank/data/media
 zfs set atime=off tank/data/media
 zfs set recordsize=1M tank/data/memorias
 zfs set atime=off tank/data/memorias
+
+# Downloads: mixed file sizes, keep default recordsize
+zfs set atime=off tank/data/downloads
 
 echo "Creating media organization folders..."
 mkdir -p /tank/data/media/Movies /tank/data/media/Series /tank/data/media/Music
@@ -54,6 +58,7 @@ setfacl -d -m "$root_acl" /tank/data # Set as default for inheritance
 echo "Applying full recursive ACLs to shared datasets..."
 setup_dataset_acls tank/data/media /tank/data/media 1000 100000
 setup_dataset_acls tank/data/memorias /tank/data/memorias 1000 100000
+setup_dataset_acls tank/data/downloads /tank/data/downloads 1000 100000
 
 # 3. PRIVATE DATA: Create/Secure primary user dataset
 # This script applies strict ACLs/Permissions only for the user.
