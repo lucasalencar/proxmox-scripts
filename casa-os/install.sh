@@ -30,6 +30,16 @@ add_dataset_acl "/tank/data/memorias" "$host_casaos_uid"
 add_dataset_acl "/tank/data/downloads" "$host_casaos_uid"
 add_dataset_acl "/tank/data/$PRIMARY_USER" "$host_casaos_uid"
 
+# 4.1 Also grant ACLs for Docker default user (PUID=1000) inside CasaOS
+# Docker containers run as PUID=1000 by default, which maps to host UID
+# 101000 (100000 + 1000). Without this, Docker apps (qBittorrent, Transmission, etc.)
+# get Permission denied when writing to bind-mounted datasets.
+host_docker_uid=$((host_casaos_uid + 1000))
+echo "Granting Docker default user (host UID $host_docker_uid) access to datasets..."
+add_dataset_acl "/tank/data/downloads" "$host_docker_uid"
+# Not needed yet, uncomment if necessary
+#add_dataset_acl "/tank/data/media" "$host_docker_uid"
+
 # 5. Perform bind mounts
 # As CasaOS runs as root inside the container (UID 100000 on host),
 # it will have full access because we gave UID 100000 access to /tank/data via ACLs.
