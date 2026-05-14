@@ -14,6 +14,14 @@ get_primary_user() {
     cat "$primary_user_file"
 }
 
+# Returns the home directory of the primary user from .primary_user file.
+# Usage: TARGET_HOME=$(get_primary_user_home)
+get_primary_user_home() {
+    local user
+    user=$(get_primary_user) || return 1
+    getent passwd "$user" | cut -d: -f6
+}
+
 # Ensures a container is installed, running a command if it's missing.
 # Returns the container ID.
 # Usage: ensure_container_installed "name" "install_command"
