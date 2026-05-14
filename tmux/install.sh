@@ -52,7 +52,7 @@ fi
 echo "Installing tmux plugins..."
 # TPM's install_plugins.sh reads TMUX_PLUGIN_MANAGER_PATH from the tmux server
 # environment. It must run as the target user so tmux sources their config.
-#su -c "tmux kill-server 2>/dev/null; '$TARGET_HOME/.tmux/plugins/tpm/scripts/install_plugins.sh'" "$TARGET_USER"
+su -c "tmux kill-server 2>/dev/null; '$TARGET_HOME/.tmux/plugins/tpm/scripts/install_plugins.sh'" "$TARGET_USER"
 
 echo "Setting ownership to $TARGET_USER..."
 chown -R "$TARGET_USER:" "$DOTFILES_DIR"
