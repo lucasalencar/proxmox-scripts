@@ -60,7 +60,3 @@ chown -R "$TARGET_USER:" "$TARGET_HOME/.tmux"
 
 echo ""
 echo "Setup complete!"
-echo ""
-echo "  1. Start tmux: tmux"
-echo "  2. Install plugins: press \` + I (backtick, then Shift+i)"
-echo "  3. (Re)load config: press \` + r"
