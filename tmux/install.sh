@@ -35,6 +35,10 @@ if [ -n "$TERM" ] && ! infocmp "$TERM" >/dev/null 2>&1; then
 fi
 EOF
 
+echo "Adding tmux alias with default session name..."
+grep -qxF 'alias tmux=' "$TARGET_HOME/.bashrc" 2>/dev/null || \
+  echo "alias tmux='tmux new-session -A -s homelab'" >> "$TARGET_HOME/.bashrc"
+
 export DOTFILES_ROOT="$DOTFILES_DIR"
 
 echo "Symlinking dotfiles with stow..."
