@@ -3,6 +3,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/functions.sh"
 
+echo "Installing jq on Proxmox host..."
+apt install -y jq
+
 echo "Starting AdGuard Home installation/configuration via LXC container..."
 
 ADGUARD_INSTALL_CMD='bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/adguard.sh)"'
