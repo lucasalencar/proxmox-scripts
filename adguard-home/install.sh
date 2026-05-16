@@ -12,7 +12,4 @@ echo "Identified Container ID: $container_id"
 
 pct start "$container_id"
 
-container_ip=$(get_container_ip "$container_id")
-
 echo "Installation completed for AdGuard Home (ID: $container_id)."
-echo "Admin UI: http://${container_ip}:3000"
