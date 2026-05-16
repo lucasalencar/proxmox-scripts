@@ -1,5 +1,21 @@
 #!/bin/bash
 
+# Exits with error if not running as root
+require_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "Error: This script must be run as root." >&2
+        exit 1
+    fi
+}
+
+# Exits with error if running as root
+require_non_root() {
+    if [[ $EUID -eq 0 ]]; then
+        echo "Error: This script must NOT be run as root. Run it as your regular user." >&2
+        exit 1
+    fi
+}
+
 # Returns the primary username from .primary_user file
 get_primary_user() {
     local script_dir

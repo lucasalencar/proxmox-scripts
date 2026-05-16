@@ -9,10 +9,7 @@ fi
 
 SECONDARY_USER=$1
 
-if [[ "$(whoami)" != "root" ]]; then
-  echo "Error: This script must be run as root"
-  exit 1
-fi
+require_root
 
 # Load helper functions
 source "$(dirname "$0")/../common/functions.sh"

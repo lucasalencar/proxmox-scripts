@@ -8,3 +8,17 @@
   - If **Linux**: you are likely running directly on the Proxmox server.
     You may execute Proxmox/ve commands and any other necessary commands
     directly.
+
+# User context validation
+
+Always determine who should run a script and add a guard at the top:
+
+Source `common/functions.sh` and use the provided helpers:
+
+- **Root-only scripts** (system config, package installs, container setup):
+  use `require_root`
+- **User-only scripts** (dotfiles, user-level tooling like opencode):
+  use `require_non_root`
+
+For root-only scripts that need to act on behalf of the primary user, use
+`get_primary_user` / `get_primary_user_home` and `su -c "..." "$TARGET_USER"`.

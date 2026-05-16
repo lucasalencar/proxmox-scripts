@@ -5,14 +5,11 @@
 
 set -e
 
-# Check if the script is running as root
-if [[ $EUID -ne 0 ]]; then
-   echo "Error: This script must be run as root."
-   exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common/functions.sh"
+require_root
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "Starting global update from $ROOT_DIR..."
+echo "Starting global update from $SCRIPT_DIR..."
 
 # Find update scripts based on arguments or discovery
 if [ $# -gt 0 ]; then

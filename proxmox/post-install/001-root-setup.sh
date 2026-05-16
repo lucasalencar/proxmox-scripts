@@ -9,10 +9,10 @@ fi
 
 SSH_USER=$1
 
-if [[ "$(whoami)" != "root" ]]; then
-  echo "Error: This script must be run as root"
-  exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../common/functions.sh"
+
+require_root
 
 # Post install script from community
 # https://community-scripts.org/scripts/post-pve-install

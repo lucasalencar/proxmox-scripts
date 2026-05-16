@@ -2,12 +2,11 @@
 # Generates an Ed25519 SSH key and copies it to the specified server
 # for passwordless authentication.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../common/functions.sh"
+
 # Prevent running as root - this script is meant for local machine setup
-if [[ "$(whoami)" == "root" ]]; then
-  echo "Error: This script must not be run as root"
-  echo "You probably want to run this one on your personal computer"
-  exit 1
-fi
+require_non_root
 
 # Load configuration from file if exists
 CONFIG_FILE="$HOME/.proxmox_config"

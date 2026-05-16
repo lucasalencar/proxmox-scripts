@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-if [[ $EUID -eq 0 ]]; then
-    echo "Error: This script must NOT be run as root. Run it as your regular user."
-    exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../common/functions.sh"
+
+require_non_root
 
 TARGET_USER="$USER"
 TARGET_HOME="$HOME"

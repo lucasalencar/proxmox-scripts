@@ -5,13 +5,12 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../common/functions.sh"
+
 echo "=== Starting Proxmox VE update ==="
 
-# Check if the script is running as root
-if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root."
-   exit 1
-fi
+require_root
 
 echo "Updating package list..."
 apt-get update
