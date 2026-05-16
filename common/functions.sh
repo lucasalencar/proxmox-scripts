@@ -74,7 +74,7 @@ get_container_ip() {
 
     ip=$(pct exec "$container_id" -- hostname -I 2>/dev/null | awk '{print $1}')
     if [ -z "$ip" ]; then
-        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^\s/]+')
+        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^\s/]+' | grep -v '^dhcp$')
     fi
 
     echo "$ip"
