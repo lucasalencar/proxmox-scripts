@@ -6,6 +6,7 @@ source "$SCRIPT_DIR/../common/functions.sh"
 ADGUARD_PORT="80"
 UPSTREAM_DNS=(
   "https://dns.cloudflare.com/dns-query"
+  "https://dns10.quad9.net/dns-query"
   "tls://9.9.9.9"
 )
 
@@ -16,20 +17,27 @@ if [ -z "$container_id" ]; then
 fi
 ADGUARD_IP=$(get_container_ip "$container_id")
 
+read -rp "AdGuard Home username: " username
 read -rsp "AdGuard Home password: " password
 echo
 
-curl -s -X POST "http://${ADGUARD_IP}:${ADGUARD_PORT}/control/login" \
+login_http=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST "http://${ADGUARD_IP}:${ADGUARD_PORT}/control/login" \
   -H "Content-Type: application/json" \
-  -d "{\"name\": \"admin\", \"password\": \"$password\"}" \
-  -c /tmp/adguard_cookies.txt > /dev/null
+  -d "{\"name\": \"$username\", \"password\": \"$password\"}" \
+  -c /tmp/adguard_cookies.txt)
+
+if [ "$login_http" != "200" ]; then
+  echo "Error: Login failed (HTTP $login_http). Check username/password."
+  exit 1
+fi
 
 upstream_json=$(printf '%s\n' "${UPSTREAM_DNS[@]}" | jq -R . | jq -s .)
 payload=$(jq -n --argjson upstream "$upstream_json" \
   '{upstream_dns: $upstream, upstream_dns_file: ""}')
 
 http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-  -X PUT "http://${ADGUARD_IP}:${ADGUARD_PORT}/control/dns_config" \
+  -X POST "http://${ADGUARD_IP}:${ADGUARD_PORT}/control/dns_config" \
   -H "Content-Type: application/json" \
   -b /tmp/adguard_cookies.txt \
   -d "$payload")
