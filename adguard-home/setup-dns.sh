@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/functions.sh"
 
-ADGUARD_PORT="3000"
+ADGUARD_PORT="80"
 DOMAIN_SUFFIX="marx.home"
 
 adguard_id=$(get_container_id_by_name "adguard")
@@ -23,13 +23,19 @@ CADDY_IP=$(get_container_ip "$caddy_id")
 echo "Caddy container IP: $CADDY_IP"
 
 login() {
-  local password
+  local username password
+  read -rp "AdGuard Home username: " username
   read -rsp "AdGuard Home password: " password
   echo
-  curl -s -X POST "http://${ADGUARD_IP}:${ADGUARD_PORT}/control/login" \
+  login_http=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "http://${ADGUARD_IP}:${ADGUARD_PORT}/control/login" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"admin\", \"password\": \"$password\"}" \
-    -c /tmp/adguard_cookies.txt > /dev/null
+    -d "{\"name\": \"$username\", \"password\": \"$password\"}" \
+    -c /tmp/adguard_cookies.txt)
+  if [ "$login_http" != "200" ]; then
+    echo "Error: Login failed (HTTP $login_http). Check username/password."
+    exit 1
+  fi
 }
 
 add_rewrite() {
