@@ -50,6 +50,20 @@ ensure_container_installed() {
     echo "$container_id"
 }
 
+# Returns the primary IP of a container by its ID.
+# Usage: container_ip=$(get_container_ip <container_id>)
+get_container_ip() {
+    local container_id="$1"
+    local ip
+
+    ip=$(pct exec "$container_id" -- hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -z "$ip" ]; then
+        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^\s/]+')
+    fi
+
+    echo "$ip"
+}
+
 # Returns the container ID by its name (partial match, case-insensitive)
 # Usage: get_container_id_by_name "name"
 get_container_id_by_name() {
