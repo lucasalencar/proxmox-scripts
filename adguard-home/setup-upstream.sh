@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/functions.sh"
 
-ADGUARD_PORT="3000"
+ADGUARD_PORT="80"
 UPSTREAM_DNS=(
   "https://dns.cloudflare.com/dns-query"
   "tls://9.9.9.9"
