@@ -79,7 +79,7 @@ while IFS= read -r vmid; do
     vmid="${vmid// /}"
     [ -z "$vmid" ] && continue
 
-    name=$(qm config "$vmid" 2>/dev/null | grep -oP 'hostname:\s*\K\S+')
+    name=$(qm config "$vmid" 2>/dev/null | grep -oP '(?:hostname|name):\s*\K\S+')
     [ -z "$name" ] && continue
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
 
@@ -88,7 +88,12 @@ while IFS= read -r vmid; do
         continue
     fi
 
-    ip=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | grep -oP '"out":"\K[^"\\]+' | awk '{print $1}')
+    json=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null)
+    ip=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | awk '{print $1}')
+    if [ -z "$ip" ]; then
+        json=$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)
+        ip=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '^127\.' | head -1)
+    fi
     if [ -z "$ip" ]; then
         ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^/]+' | head -1)
     fi
@@ -132,7 +137,7 @@ for i in $(seq 0 $((TOTAL - 1))); do
         else
             if qm status "$gid" 2>/dev/null | grep -q "running"; then
                 output=$(qm guest exec "$gid" -- ss -tlnp 2>/dev/null)
-                listening_ports=$(echo "$output" | grep -oP '"out":"\K[^"\\]+' | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+                listening_ports=$(echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
             fi
         fi
 
