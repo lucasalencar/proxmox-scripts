@@ -16,3 +16,11 @@ echo "Identified Container ID: $container_id"
 pct start "$container_id"
 
 echo "Installation completed for AdGuard Home (ID: $container_id)."
+
+echo ""
+echo "Running upstream DNS setup..."
+bash "$SCRIPT_DIR/setup-upstream.sh"
+
+echo ""
+echo "Running DNS rewrite setup..."
+bash "$SCRIPT_DIR/setup-dns.sh"
