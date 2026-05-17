@@ -5,9 +5,7 @@ source "$SCRIPT_DIR/../common/functions.sh"
 
 ADGUARD_PORT="80"
 UPSTREAM_DNS=(
-  "https://dns.cloudflare.com/dns-query"
-  "https://dns10.quad9.net/dns-query"
-  "tls://9.9.9.9"
+  "https://security.cloudflare-dns.com/dns-query"
 )
 
 container_id=$(get_container_id_by_name "adguard")
