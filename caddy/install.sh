@@ -27,16 +27,5 @@ if [ -z "$CADDY_IP" ]; then
 fi
 echo "Caddy container IP: $CADDY_IP"
 
-echo "Waiting for Caddy service..."
-for i in $(seq 1 15); do
-  if pct exec "$container_id" -- systemctl is-active caddy >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-
-pct push "$container_id" "$SCRIPT_DIR/Caddyfile" /etc/caddy/Caddyfile
-pct exec "$container_id" -- systemctl reload caddy
-
 echo "Installation completed for Caddy (ID: $container_id, IP: $CADDY_IP)."
 echo "Update AdGuard DNS wildcard *.marx.home to point to $CADDY_IP"
