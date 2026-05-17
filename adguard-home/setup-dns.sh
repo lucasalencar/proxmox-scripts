@@ -6,21 +6,21 @@ source "$SCRIPT_DIR/../common/functions.sh"
 ADGUARD_PORT="3000"
 DOMAIN_SUFFIX="marx.home"
 
-container_id=$(get_container_id_by_name "adguard")
-if [ -z "$container_id" ]; then
+adguard_id=$(get_container_id_by_name "adguard")
+if [ -z "$adguard_id" ]; then
   echo "Error: AdGuard container not found."
   exit 1
 fi
-ADGUARD_IP=$(get_container_ip "$container_id")
+ADGUARD_IP=$(get_container_ip "$adguard_id")
 echo "AdGuard Home container IP: $ADGUARD_IP"
 
-# Services: name -> IP final octet
-declare -A SERVICES=(
-  [casaos]=136
-  [jellyfin]=181
-  [adguard]=22
-  [ha]=282
-)
+caddy_id=$(get_container_id_by_name "caddy")
+if [ -z "$caddy_id" ]; then
+  echo "Error: Caddy container not found. Install Caddy first."
+  exit 1
+fi
+CADDY_IP=$(get_container_ip "$caddy_id")
+echo "Caddy container IP: $CADDY_IP"
 
 login() {
   local password
@@ -45,13 +45,18 @@ add_rewrite() {
 
 login
 
-for service in "${!SERVICES[@]}"; do
-  domain="${service}.${DOMAIN_SUFFIX}"
-  ip="192.168.31.${SERVICES[$service]}"
-  code=$(add_rewrite "$domain" "$ip")
-  if [ "$code" = "200" ]; then
-    echo "OK  $domain -> $ip"
-  else
-    echo "ERR $domain -> $ip (HTTP $code)"
-  fi
-done
+# Wildcard: all *.marx.home domains pointed to Caddy
+code=$(add_rewrite "*.${DOMAIN_SUFFIX}" "$CADDY_IP")
+if [ "$code" = "200" ]; then
+  echo "OK  *.${DOMAIN_SUFFIX} -> $CADDY_IP"
+else
+  echo "ERR *.${DOMAIN_SUFFIX} -> $CADDY_IP (HTTP $code)"
+fi
+
+# Explicit rewrite for AdGuard to remain accessible independently
+code=$(add_rewrite "adguard.${DOMAIN_SUFFIX}" "$ADGUARD_IP")
+if [ "$code" = "200" ]; then
+  echo "OK  adguard.${DOMAIN_SUFFIX} -> $ADGUARD_IP"
+else
+  echo "ERR adguard.${DOMAIN_SUFFIX} -> $ADGUARD_IP (HTTP $code)"
+fi

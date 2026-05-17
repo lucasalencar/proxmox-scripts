@@ -1,0 +1,11 @@
+jellyfin.marx.home {
+    reverse_proxy 192.168.31.181:8096
+}
+
+ha.marx.home {
+    reverse_proxy 192.168.31.282:8123
+}
+
+casaos.marx.home {
+    reverse_proxy 192.168.31.136:80
+}
