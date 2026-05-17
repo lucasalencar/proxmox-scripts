@@ -14,8 +14,26 @@ echo "Identified Container ID: $container_id"
 
 pct start "$container_id"
 
-CADDY_IP=$(get_container_ip "$container_id")
+echo "Waiting for container IP..."
+for i in $(seq 1 15); do
+  CADDY_IP=$(get_container_ip "$container_id")
+  [ -n "$CADDY_IP" ] && break
+  sleep 2
+done
+
+if [ -z "$CADDY_IP" ]; then
+  echo "Error: Could not get Caddy container IP after 30 seconds."
+  exit 1
+fi
 echo "Caddy container IP: $CADDY_IP"
+
+echo "Waiting for Caddy service..."
+for i in $(seq 1 15); do
+  if pct exec "$container_id" -- systemctl is-active caddy >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
 pct push "$container_id" "$SCRIPT_DIR/Caddyfile" /etc/caddy/Caddyfile
 pct exec "$container_id" -- systemctl reload caddy
