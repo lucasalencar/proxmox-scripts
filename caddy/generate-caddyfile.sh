@@ -22,7 +22,6 @@ if [ -z "$CADDY_ID" ]; then
     exit 1
 fi
 
-# Ensure Caddy container is running (needed for pct push)
 pct start "$CADDY_ID" 2>/dev/null || true
 
 CADDY_IP=$(get_container_ip "$CADDY_ID")
@@ -51,11 +50,13 @@ if [ -f "$LOCAL_CADDYFILE" ]; then
     echo ""
 fi
 
-# --- Collect all containers (excluding caddy itself) ---
-CONTAINER_IDS=()
-CONTAINER_NAMES=()
-declare -A CONTAINER_IPS
+# --- Collect all guests (containers + VMs, excluding caddy itself) ---
+GUEST_IDS=()
+GUEST_NAMES=()
+GUEST_TYPES=()
+declare -A GUEST_IPS
 
+# --- Collect containers (LXC) ---
 while IFS= read -r cid; do
     cid="${cid// /}"
     [ -z "$cid" ] && continue
@@ -65,46 +66,76 @@ while IFS= read -r cid; do
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
 
     ip=$(get_container_ip "$cid")
-    if [ -z "$ip" ]; then
-        echo "  Skipping container $cid ($name) — no IP available (may be stopped)"
+    [ -z "$ip" ] && continue
+
+    GUEST_IDS+=("$cid")
+    GUEST_NAMES+=("$name")
+    GUEST_TYPES+=("ct")
+    GUEST_IPS["$name"]="$ip"
+done < <(pct list | tail -n +2 | awk '{print $1}' | sort -n)
+
+# --- Collect VMs (QEMU) ---
+while IFS= read -r vmid; do
+    vmid="${vmid// /}"
+    [ -z "$vmid" ] && continue
+
+    name=$(qm config "$vmid" 2>/dev/null | grep -oP 'hostname:\s*\K\S+')
+    [ -z "$name" ] && continue
+    [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
+
+    if [ -n "${GUEST_IPS[$name]:-}" ]; then
+        echo "  Skipping VM $vmid ($name) — name already used by another guest"
         continue
     fi
 
-    CONTAINER_IDS+=("$cid")
-    CONTAINER_NAMES+=("$name")
-    CONTAINER_IPS["$name"]="$ip"
-done < <(pct list | tail -n +2 | awk '{print $1}' | sort -n)
+    ip=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | grep -oP '"out":"\K[^"\\]+' | awk '{print $1}')
+    if [ -z "$ip" ]; then
+        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^/]+' | head -1)
+    fi
+    [ -z "$ip" ] && continue
 
-TOTAL=${#CONTAINER_NAMES[@]}
+    GUEST_IDS+=("$vmid")
+    GUEST_NAMES+=("$name")
+    GUEST_TYPES+=("vm")
+    GUEST_IPS["$name"]="$ip"
+done < <(qm list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -n)
+
+TOTAL=${#GUEST_NAMES[@]}
 if [ "$TOTAL" -eq 0 ]; then
-    echo "No containers found to configure."
+    echo "No guests found to configure."
     exit 0
 fi
 
-echo "Found $TOTAL container(s) to configure:"
+echo "Found $TOTAL guest(s) to configure:"
 for i in $(seq 0 $((TOTAL - 1))); do
-    name="${CONTAINER_NAMES[$i]}"
-    echo "  ${CONTAINER_IDS[$i]}: $name (${CONTAINER_IPS[$name]})"
+    type_label="[${GUEST_TYPES[$i]}]"
+    echo "  $type_label ${GUEST_IDS[$i]}: ${GUEST_NAMES[$i]} (${GUEST_IPS[${GUEST_NAMES[$i]}]})"
 done
 echo ""
 
-# --- Determine port for each container ---
+# --- Determine port for each guest ---
 for i in $(seq 0 $((TOTAL - 1))); do
-    name="${CONTAINER_NAMES[$i]}"
-    cid="${CONTAINER_IDS[$i]}"
-    ip="${CONTAINER_IPS[$name]}"
+    name="${GUEST_NAMES[$i]}"
+    gid="${GUEST_IDS[$i]}"
+    type="${GUEST_TYPES[$i]}"
+    ip="${GUEST_IPS[$name]}"
 
     if [ -n "${PORT_MAP[$name]:-}" ]; then
         port="${PORT_MAP[$name]}"
         echo "  $CHECK $name $ARROW saved port $port"
     else
-        # Detect listening ports inside the container
         listening_ports=""
-        if pct status "$cid" 2>/dev/null | grep -q "running"; then
-            listening_ports=$(pct exec "$cid" -- ss -tlnp 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+        if [ "$type" = "ct" ]; then
+            if pct status "$gid" 2>/dev/null | grep -q "running"; then
+                listening_ports=$(pct exec "$gid" -- ss -tlnp 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+            fi
+        else
+            if qm status "$gid" 2>/dev/null | grep -q "running"; then
+                output=$(qm guest exec "$gid" -- ss -tlnp 2>/dev/null)
+                listening_ports=$(echo "$output" | grep -oP '"out":"\K[^"\\]+' | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+            fi
         fi
 
-        # Suggest a port: priority 80, 443, then first detected, then fallback 80
         suggested="80"
         if [ -n "$listening_ports" ]; then
             for p in 80 443; do
@@ -136,8 +167,8 @@ echo ""
 # --- Generate Caddyfile ---
 {
     for i in $(seq 0 $((TOTAL - 1))); do
-        name="${CONTAINER_NAMES[$i]}"
-        ip="${CONTAINER_IPS[$name]}"
+        name="${GUEST_NAMES[$i]}"
+        ip="${GUEST_IPS[$name]}"
         port="${PORT_MAP[$name]}"
         echo "http://$name.$DOMAIN {"
         echo "    reverse_proxy $ip:$port"
