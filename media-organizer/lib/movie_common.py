@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 import urllib.parse
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -270,6 +271,7 @@ def build_plan(
     cache = load_json_file(cache_path, default={})
     candidates, review_items = scan_movie_candidates(root)
     actions: list[dict[str, Any]] = []
+    messages: list[dict[str, Any]] = []
 
     for candidate in candidates:
         parsed = parse_movie_name(candidate.evidence_name)
@@ -287,12 +289,36 @@ def build_plan(
 
         if not parsed.year:
             if tmdb_api_key:
-                if tmdb_error == "network":
-                    details = "No local year found and TMDB search failed (network error)"
+                if tmdb_error:
+                    details = f"No local year found and TMDB search failed ({tmdb_error})"
+                    messages.append(
+                        {
+                            "level": "error",
+                            "code": "tmdb-search-failed",
+                            "source": str(candidate.source),
+                            "details": details,
+                        }
+                    )
                 else:
                     details = "No local year found and TMDB search returned no results"
+                    messages.append(
+                        {
+                            "level": "warning",
+                            "code": "tmdb-no-results",
+                            "source": str(candidate.source),
+                            "details": details,
+                        }
+                    )
             else:
                 details = "No local year found and TMDB_API_KEY is not configured"
+                messages.append(
+                    {
+                        "level": "warning",
+                        "code": "tmdb-api-key-missing",
+                        "source": str(candidate.source),
+                        "details": details,
+                    }
+                )
             review_items.append(
                 {
                     "source": str(candidate.source),
@@ -343,6 +369,7 @@ def build_plan(
         "preserve_internal_names": True,
         "actions": actions,
         "review": review_items,
+        "messages": messages,
     }
     save_json_file(plan_path, manifest)
     write_review_csv(review_csv_path, manifest)
@@ -365,7 +392,7 @@ def detect_conflicts(source: Path, target: Path, action_type: str) -> list[str]:
 
 def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     cache_key = f"{query}|{year or ''}"
-    if cache_key in cache:
+    if cache_key in cache and cache[cache_key] is not None:
         return cache[cache_key], None
 
     params = {"query": query}
@@ -377,12 +404,20 @@ def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        cache[cache_key] = None
-        return None, "network"
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code} {exc.reason}"
+    except urllib.error.URLError as exc:
+        return None, f"network error: {exc.reason}"
+    except OSError as exc:
+        return None, f"network error: {exc}"
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, "invalid JSON response"
 
     result = _best_tmdb_result(payload.get("results", []), year)
-    cache[cache_key] = result
+    if result:
+        cache[cache_key] = result
+    else:
+        cache.pop(cache_key, None)
     return result, None
 
 

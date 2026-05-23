@@ -152,6 +152,8 @@ class TmdbReviewDetailsTests(unittest.TestCase):
 
         self.assertEqual(len(manifest["review"]), 1)
         self.assertIn("not configured", manifest["review"][0]["details"])
+        self.assertEqual(manifest["messages"][0]["level"], "warning")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-api-key-missing")
 
     def test_network_error_shows_network_error_message(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -165,6 +167,8 @@ class TmdbReviewDetailsTests(unittest.TestCase):
 
         self.assertEqual(len(manifest["review"]), 1)
         self.assertIn("network error", manifest["review"][0]["details"])
+        self.assertEqual(manifest["messages"][0]["level"], "error")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-search-failed")
 
     def test_no_results_shows_no_results_message(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -182,6 +186,29 @@ class TmdbReviewDetailsTests(unittest.TestCase):
 
         self.assertEqual(len(manifest["review"]), 1)
         self.assertIn("returned no results", manifest["review"][0]["details"])
+        self.assertEqual(manifest["messages"][0]["level"], "warning")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
+
+    def test_cached_none_does_not_hide_later_tmdb_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "Raul O Inicio O Fim e o Meio"
+            folder.mkdir()
+            (folder / "Raul.O.Inicio.O.Fim.e.o.Meio.DVDRip.XviD-3LT0N.avi").write_text("", encoding="utf-8")
+            cache_path = root / movie_common.DEFAULT_CACHE_NAME
+            cache_path.write_text(json.dumps({"Raul O Inicio O Fim E O Meio|": None}), encoding="utf-8")
+
+            mock_response = unittest.mock.MagicMock()
+            mock_response.read.return_value = b'{"results": [{"id": 84198, "title": "Raul: O Inicio, O Fim e o Meio", "release_date": "2012-03-23"}]}'
+            mock_response.__enter__.return_value = mock_response
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response) as urlopen:
+                manifest = movie_common.build_plan(root, cache_path=cache_path, tmdb_api_key="fake_key")
+
+        self.assertEqual(len(manifest["actions"]), 1)
+        self.assertEqual(manifest["actions"][0]["tmdb_id"], 84198)
+        self.assertEqual(manifest["messages"], [])
+        urlopen.assert_called_once()
 
 
 class CliTests(unittest.TestCase):
@@ -215,6 +242,29 @@ class CliTests(unittest.TestCase):
             )
             self.assertNotEqual(missing_plan.returncode, 0)
             self.assertIn("--plan", missing_plan.stderr)
+
+    def test_cli_prints_tmdb_warnings_to_stderr(self):
+        cli_path = MOVIES_DIR / "normalize-movies-folders.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "Raul O Inicio O Fim e o Meio"
+            folder.mkdir()
+            (folder / "Raul.O.Inicio.O.Fim.e.o.Meio.DVDRip.XviD-3LT0N.avi").write_text("", encoding="utf-8")
+            env = dict(os.environ)
+            env.pop("TMDB_API_KEY", None)
+
+            dry_run = subprocess.run(
+                [sys.executable, str(cli_path), "--root", str(root)],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+
+        self.assertEqual(dry_run.returncode, 0, dry_run.stderr)
+        self.assertIn("Warning:", dry_run.stderr)
+        self.assertIn("TMDB_API_KEY is not configured", dry_run.stderr)
 
 
 if __name__ == "__main__":
