@@ -47,9 +47,20 @@ All code and documentation must be written in English.
 
 ---
 
+## MEDIUM PRIORITY
+
+### 5. Test-Driven Development (TDD)
+
+Use TDD (Red-Green-Refactor) when building or modifying elaborate code
+projects (e.g. Python/Go libraries, CLI tools, modules with business logic).
+Bash scripts are exempt from TDD — they should be tested, but not necessarily
+test-first.
+
+---
+
 ## LOW PRIORITY
 
-### 5. Implementation patterns
+### 6. Implementation patterns
 
 - Source `common/functions.sh` and use the provided helpers.
 - For root-only scripts that need to act on behalf of the primary user, use
