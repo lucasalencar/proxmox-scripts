@@ -57,13 +57,17 @@ def main(argv: list[str] | None = None) -> int:
     plan_path = Path(args.plan).expanduser().resolve() if args.plan else root / movie_common.DEFAULT_PLAN_NAME
     review_path = Path(args.review_csv).expanduser().resolve() if args.review_csv else root / movie_common.DEFAULT_REVIEW_NAME
     cache_path = Path(args.cache).expanduser().resolve() if args.cache else root / movie_common.DEFAULT_CACHE_NAME
-    manifest = movie_common.build_plan(
-        root=root,
-        plan_path=plan_path,
-        review_csv_path=review_path,
-        cache_path=cache_path,
-        tmdb_api_key=os.environ.get("TMDB_API_KEY"),
-    )
+    try:
+        manifest = movie_common.build_plan(
+            root=root,
+            plan_path=plan_path,
+            review_csv_path=review_path,
+            cache_path=cache_path,
+            tmdb_api_key=os.environ.get("TMDB_API_KEY"),
+        )
+    except movie_common.TmdbSearchError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     for message in manifest.get("messages", []):
         prefix = "Error" if message.get("level") == "error" else "Warning"
         print(f"{prefix}: {message.get('details')} [{message.get('source')}]", file=sys.stderr)

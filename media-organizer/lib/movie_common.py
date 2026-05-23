@@ -72,6 +72,10 @@ class MovieCandidate:
     reason: str
 
 
+class TmdbSearchError(RuntimeError):
+    """Raised when TMDb is configured but the API lookup cannot complete."""
+
+
 def is_video(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
 
@@ -291,14 +295,7 @@ def build_plan(
             if tmdb_api_key:
                 if tmdb_error:
                     details = f"No local year found and TMDB search failed ({tmdb_error})"
-                    messages.append(
-                        {
-                            "level": "error",
-                            "code": "tmdb-search-failed",
-                            "source": str(candidate.source),
-                            "details": details,
-                        }
-                    )
+                    raise TmdbSearchError(f"{details} [{candidate.source}]")
                 else:
                     details = "No local year found and TMDB search returned no results"
                     messages.append(

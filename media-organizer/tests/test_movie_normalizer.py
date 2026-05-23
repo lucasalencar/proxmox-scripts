@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -155,7 +157,7 @@ class TmdbReviewDetailsTests(unittest.TestCase):
         self.assertEqual(manifest["messages"][0]["level"], "warning")
         self.assertEqual(manifest["messages"][0]["code"], "tmdb-api-key-missing")
 
-    def test_network_error_shows_network_error_message(self):
+    def test_network_error_raises_tmdb_search_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             folder = root / "Raul O Inicio O Fim e o Meio"
@@ -163,12 +165,10 @@ class TmdbReviewDetailsTests(unittest.TestCase):
             (folder / "Raul.O.Inicio.O.Fim.e.o.Meio.DVDRip.XviD-3LT0N.avi").write_text("", encoding="utf-8")
 
             with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", side_effect=OSError("Connection refused")):
-                manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+                with self.assertRaises(movie_common.TmdbSearchError) as raised:
+                    movie_common.build_plan(root, tmdb_api_key="fake_key")
 
-        self.assertEqual(len(manifest["review"]), 1)
-        self.assertIn("network error", manifest["review"][0]["details"])
-        self.assertEqual(manifest["messages"][0]["level"], "error")
-        self.assertEqual(manifest["messages"][0]["code"], "tmdb-search-failed")
+        self.assertIn("network error", str(raised.exception))
 
     def test_no_results_shows_no_results_message(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -265,6 +265,30 @@ class CliTests(unittest.TestCase):
         self.assertEqual(dry_run.returncode, 0, dry_run.stderr)
         self.assertIn("Warning:", dry_run.stderr)
         self.assertIn("TMDB_API_KEY is not configured", dry_run.stderr)
+
+    def test_cli_exits_nonzero_when_configured_tmdb_lookup_fails(self):
+        cli_path = MOVIES_DIR / "normalize-movies-folders.py"
+        spec = importlib.util.spec_from_file_location("normalize_movies_folders", cli_path)
+        self.assertIsNotNone(spec)
+        cli = importlib.util.module_from_spec(spec)
+        self.assertIsNotNone(spec.loader)
+        spec.loader.exec_module(cli)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "Raul O Inicio O Fim e o Meio"
+            folder.mkdir()
+            (folder / "Raul.O.Inicio.O.Fim.e.o.Meio.DVDRip.XviD-3LT0N.avi").write_text("", encoding="utf-8")
+            stderr = io.StringIO()
+
+            with unittest.mock.patch.dict(os.environ, {"TMDB_API_KEY": "fake-key"}):
+                with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", side_effect=OSError("Connection refused")):
+                    with contextlib.redirect_stderr(stderr):
+                        exit_code = cli.main(["--root", str(root)])
+
+        self.assertNotEqual(exit_code, 0)
+        self.assertIn("Error:", stderr.getvalue())
+        self.assertIn("TMDB search failed", stderr.getvalue())
 
 
 if __name__ == "__main__":
