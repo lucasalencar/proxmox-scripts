@@ -80,6 +80,18 @@ class MovieNameParsingTests(unittest.TestCase):
         self.assertEqual(proper.title, "A Proper Violence")
         self.assertEqual(sample.title, "Sample This")
 
+    def test_removes_trailing_release_groups_after_codec_noise(self):
+        lobo = movie_common.parse_movie_name("O.Lobo.Atras.da.Porta.2014.DVDRip.x264.AC3-RK.mkv")
+        romeo = movie_common.parse_movie_name("Romeo.and.Juliet.1968.REMASTERED.1080p.BluRay.H264.AAC-LAMA[TGx]")
+        gift = movie_common.parse_movie_name("2000 The.Gift.2000.DVDRip.XviD.AR")
+
+        self.assertEqual(lobo.title, "O Lobo Atras Da Porta")
+        self.assertEqual(lobo.year, "2014")
+        self.assertEqual(romeo.title, "Romeo and Juliet")
+        self.assertEqual(romeo.year, "1968")
+        self.assertEqual(gift.title, "The Gift")
+        self.assertEqual(gift.year, "2000")
+
 
 class ScannerTests(unittest.TestCase):
     def test_scanner_ignores_macos_appledouble_video_artifacts(self):
@@ -292,6 +304,40 @@ class TmdbReviewDetailsTests(unittest.TestCase):
 
             mock_response = unittest.mock.MagicMock()
             mock_response.read.return_value = b'{"results": [{"id": 43939, "title": "I\\u0027m Still Here", "release_date": "2010-09-10"}]}'
+            mock_response.__enter__.return_value = mock_response
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):
+                manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+
+        self.assertEqual(manifest["actions"], [])
+        self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
+
+    def test_future_tmdb_match_is_reviewed_as_no_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "The Beatles - Live at Shea Stadium 1965 [XviD].avi").write_text("", encoding="utf-8")
+
+            mock_response = unittest.mock.MagicMock()
+            mock_response.read.return_value = b'{"results": [{"id": 1247606, "title": "The Beatles Ringo", "release_date": "2099-01-01"}]}'
+            mock_response.__enter__.return_value = mock_response
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):
+                manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+
+        self.assertEqual(manifest["actions"], [])
+        self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
+
+    def test_collection_suffix_tmdb_match_requires_strong_title_overlap(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "The Traveling Wilburys - The True History Of The Traveling Wilburys"
+            folder.mkdir()
+            (folder / "#Concert The Traveling Wilburys - The True History Of The Traveling Wilburys (dansker) DVDto.avi").write_text("", encoding="utf-8")
+
+            mock_response = unittest.mock.MagicMock()
+            mock_response.read.return_value = b'{"results": [{"id": 1081915, "title": "The Traveling Wilburys Collection", "release_date": "2007-01-01"}]}'
             mock_response.__enter__.return_value = mock_response
 
             with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):

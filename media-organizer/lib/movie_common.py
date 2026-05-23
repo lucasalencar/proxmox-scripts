@@ -46,7 +46,7 @@ NOISE_RE = re.compile(
     r"\b("
     r"480p|576p|720p|1080p|2160p|4k|uhd|hdr|hdtv|web[-_. ]?dl|webrip|"
     r"brrip|bluray|blu[-_. ]?ray|bdrip|dvdrip|dvd[-_. ]?rip|dvdscr|xvid|divx|"
-    r"x264|x265|h264|h\.264|h265|h\.265|hevc|aac|dts|dd5|ddp5|10bit|8bit|"
+    r"x264|x265|h264|h\.264|h265|h\.265|hevc|aac|ac3|dts|dd5|ddp5|10bit|8bit|"
     r"yify|yts|rarbg|anoXmous|publichd|psychd|ctrlhd|gaz|"
     r"repack|swesub"
     r")\b",
@@ -63,9 +63,13 @@ EDITION_TAG_RE = re.compile(
     re.IGNORECASE,
 )
 TRAILING_RELEASE_GROUP_RE = re.compile(
-    r"\b(480p|576p|720p|1080p|2160p|4k|uhd|hdr|hdtv|web[-_. ]?dl|webrip|web|"
-    r"brrip|bluray|blu[-_. ]?ray|bdrip|dvdrip|dvd[-_. ]?rip|x264|x265|h264|h265|hevc)"
-    r"\s+(?:horizon|silence)\b\s*$",
+    r"\b(?:480p|576p|720p|1080p|2160p|4k|uhd|hdr|hdtv|web[-_. ]?dl|webrip|"
+    r"brrip|bluray|blu[-_. ]?ray|bdrip|dvdrip|dvd[-_. ]?rip|xvid|divx|"
+    r"x264|x265|h264|h\.264|h265|h\.265|hevc|aac|ac3|dts)"
+    r"(?:[\s._-]+(?:480p|576p|720p|1080p|2160p|4k|uhd|hdr|hdtv|web[-_. ]?dl|webrip|"
+    r"brrip|bluray|blu[-_. ]?ray|bdrip|dvdrip|dvd[-_. ]?rip|xvid|divx|"
+    r"x264|x265|h264|h\.264|h265|h\.265|hevc|aac|ac3|dts|"
+    r"horizon|silence|rk|lama|tgx|ar))*\s*$",
     re.IGNORECASE,
 )
 
@@ -138,7 +142,7 @@ def parse_movie_name(raw_name: str) -> ParsedName:
             year = year_match.group(1)
             name = name[: year_match.start()] + " " + name[year_match.end() :]
 
-    name = TRAILING_RELEASE_GROUP_RE.sub(r"\1 ", name)
+    name = TRAILING_RELEASE_GROUP_RE.sub(" ", name)
     name = NOISE_RE.sub(" ", name)
     name = re.sub(r"\b(?:cd|disc|disk|dvd)[\s._-]*0?[1-9]\b", " ", name, flags=re.IGNORECASE)
     name = re.sub(r"\b(?:eng|pob|por|ptbr|subpack|subs?)\b", " ", name, flags=re.IGNORECASE)
@@ -521,6 +525,8 @@ def _best_tmdb_result(results: list[dict[str, Any]], year: str | None, query: st
     if not selected:
         return None
     release_year = str(selected.get("release_date", ""))[:4] or None
+    if release_year and int(release_year) > datetime.now(timezone.utc).year + 1:
+        return None
     return {"id": selected.get("id"), "title": selected.get("title") or selected.get("original_title"), "year": release_year}
 
 
@@ -533,6 +539,8 @@ def _tmdb_title_matches(query: str, result: dict[str, Any]) -> bool:
     }
     for candidate in candidates:
         if not candidate:
+            continue
+        if candidate.endswith("collection") and not query_title.endswith("collection"):
             continue
         if query_title == candidate:
             return True
