@@ -41,6 +41,32 @@ class MovieNameParsingTests(unittest.TestCase):
 
 
 class ScannerTests(unittest.TestCase):
+    def test_scanner_ignores_macos_appledouble_video_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "._An.American.Werewolf.In.London.1981.mkv").write_text("", encoding="utf-8")
+            video = root / "An.American.Werewolf.In.London.1981.mkv"
+            video.write_text("", encoding="utf-8")
+
+            candidates, review = movie_common.scan_movie_candidates(root)
+
+        self.assertEqual(review, [])
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].source.name, video.name)
+
+    def test_scanner_ignores_sample_video_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "Movie.Sample.2001.mkv").write_text("", encoding="utf-8")
+            video = root / "Movie.2001.mkv"
+            video.write_text("", encoding="utf-8")
+
+            candidates, review = movie_common.scan_movie_candidates(root)
+
+        self.assertEqual(review, [])
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].source.name, video.name)
+
     def test_scanner_preserves_grouping_folder_and_detects_child_movies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -129,6 +155,21 @@ class ManifestAndApplyTests(unittest.TestCase):
         self.assertEqual(manifest["actions"], [])
         self.assertEqual(manifest["review"][0]["reason"], "target-conflict")
 
+    def test_duplicate_planned_folder_targets_go_to_review_not_actions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first = root / "1980 The Elephant Man"
+            first.mkdir()
+            (first / "the.elephant.man.1980.mkv").write_text("", encoding="utf-8")
+            second = root / "1980 The Elephant Man "
+            second.mkdir()
+            (second / "the.elephant.man.1980.copy.mkv").write_text("", encoding="utf-8")
+
+            manifest = movie_common.build_plan(root)
+
+        self.assertEqual(manifest["actions"], [])
+        self.assertEqual({item["reason"] for item in manifest["review"]}, {"planned-target-conflict"})
+
     def test_without_tmdb_key_missing_year_is_reviewed_without_network(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -187,6 +228,22 @@ class TmdbReviewDetailsTests(unittest.TestCase):
         self.assertEqual(len(manifest["review"]), 1)
         self.assertIn("returned no results", manifest["review"][0]["details"])
         self.assertEqual(manifest["messages"][0]["level"], "warning")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
+
+    def test_distant_tmdb_match_is_reviewed_as_no_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "I'm Here.avi").write_text("", encoding="utf-8")
+
+            mock_response = unittest.mock.MagicMock()
+            mock_response.read.return_value = b'{"results": [{"id": 43939, "title": "I\\u0027m Still Here", "release_date": "2010-09-10"}]}'
+            mock_response.__enter__.return_value = mock_response
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):
+                manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+
+        self.assertEqual(manifest["actions"], [])
+        self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
         self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
 
     def test_cached_none_does_not_hide_later_tmdb_result(self):

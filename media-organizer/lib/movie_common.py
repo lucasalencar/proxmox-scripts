@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import difflib
 import json
 import re
 import shutil
@@ -33,6 +34,7 @@ PLAN_VERSION = 1
 DEFAULT_PLAN_NAME = ".movie-organizer-plan.json"
 DEFAULT_REVIEW_NAME = ".movie-organizer-review.csv"
 DEFAULT_CACHE_NAME = ".movie-organizer-cache.json"
+IGNORED_DIRECTORY_NAMES = {"__MACOSX"}
 
 YEAR_RE = re.compile(r"(?<!\d)(18[8-9]\d|19\d{2}|20\d{2})(?!\d)")
 LEADING_YEAR_RE = re.compile(r"^\s*(18[8-9]\d|19\d{2}|20\d{2})[\s._-]+(.+)$")
@@ -52,6 +54,7 @@ NOISE_RE = re.compile(
 )
 INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 SPACING_RE = re.compile(r"\s+")
+SAMPLE_VIDEO_RE = re.compile(r"(^|[\s._\-[\]()])sample($|[\s._\-[\]()])", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -77,11 +80,19 @@ class TmdbSearchError(RuntimeError):
 
 
 def is_video(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+    return path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS and not is_ignored_video(path)
 
 
 def is_context_file(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in CONTEXT_EXTENSIONS
+    return path.is_file() and path.suffix.lower() in CONTEXT_EXTENSIONS and not is_ignored_artifact(path)
+
+
+def is_ignored_artifact(path: Path) -> bool:
+    return path.name.startswith("._") or path.name == ".DS_Store" or any(part in IGNORED_DIRECTORY_NAMES for part in path.parts)
+
+
+def is_ignored_video(path: Path) -> bool:
+    return is_ignored_artifact(path) or bool(SAMPLE_VIDEO_RE.search(path.stem))
 
 
 def parse_movie_name(raw_name: str) -> ParsedName:
@@ -166,10 +177,10 @@ def _scan_directory(
     candidates: list[MovieCandidate],
     review: list[dict[str, Any]],
 ) -> None:
-    entries = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+    entries = [item for item in sorted(directory.iterdir(), key=lambda item: item.name.lower()) if not is_ignored_artifact(item)]
     direct_videos = tuple(item for item in entries if is_video(item))
     context_files = tuple(item for item in entries if is_context_file(item))
-    subdirs = [item for item in entries if item.is_dir() and not item.name.startswith(".")]
+    subdirs = [item for item in entries if item.is_dir() and not item.name.startswith(".") and item.name not in IGNORED_DIRECTORY_NAMES]
 
     if not direct_videos:
         for subdir in subdirs:
@@ -357,6 +368,8 @@ def build_plan(
             }
         )
 
+    actions, planned_conflict_reviews = remove_planned_target_conflicts(actions)
+    review_items.extend(planned_conflict_reviews)
     save_json_file(cache_path, cache)
     manifest = {
         "version": PLAN_VERSION,
@@ -387,6 +400,43 @@ def detect_conflicts(source: Path, target: Path, action_type: str) -> list[str]:
     return []
 
 
+def remove_planned_target_conflicts(actions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    actions_by_target: dict[str, list[dict[str, Any]]] = {}
+    for action in actions:
+        actions_by_target.setdefault(action["target"], []).append(action)
+
+    conflicted_targets = {
+        target
+        for target, target_actions in actions_by_target.items()
+        if len(target_actions) > 1 and not _can_share_planned_target(target_actions)
+    }
+    if not conflicted_targets:
+        return actions, []
+
+    safe_actions = [action for action in actions if action["target"] not in conflicted_targets]
+    review_items: list[dict[str, Any]] = []
+    for target in sorted(conflicted_targets):
+        target_actions = actions_by_target[target]
+        details = "Multiple planned actions would use the same target: " + "; ".join(action["source"] for action in target_actions)
+        for action in target_actions:
+            review_items.append(
+                {
+                    "source": action["source"],
+                    "target": target,
+                    "reason": "planned-target-conflict",
+                    "details": details,
+                }
+            )
+    return safe_actions, review_items
+
+
+def _can_share_planned_target(actions: list[dict[str, Any]]) -> bool:
+    if any(action["type"] != "move_file_to_folder" for action in actions):
+        return False
+    destination_names = [Path(action["source"]).name for action in actions]
+    return len(destination_names) == len(set(destination_names))
+
+
 def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     cache_key = f"{query}|{year or ''}"
     if cache_key in cache and cache[cache_key] is not None:
@@ -410,7 +460,7 @@ def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None, "invalid JSON response"
 
-    result = _best_tmdb_result(payload.get("results", []), year)
+    result = _best_tmdb_result(payload.get("results", []), year, query)
     if result:
         cache[cache_key] = result
     else:
@@ -418,17 +468,45 @@ def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any
     return result, None
 
 
-def _best_tmdb_result(results: list[dict[str, Any]], year: str | None) -> dict[str, Any] | None:
+def _best_tmdb_result(results: list[dict[str, Any]], year: str | None, query: str) -> dict[str, Any] | None:
     if not results:
         return None
-    selected = results[0]
+    selected = None
     if year:
         for result in results:
             if str(result.get("release_date", ""))[:4] == year:
                 selected = result
                 break
+    else:
+        for result in results:
+            if _tmdb_title_matches(query, result):
+                selected = result
+                break
+    if not selected:
+        selected = results[0] if year and _tmdb_title_matches(query, results[0]) else None
+    if not selected:
+        return None
     release_year = str(selected.get("release_date", ""))[:4] or None
     return {"id": selected.get("id"), "title": selected.get("title") or selected.get("original_title"), "year": release_year}
+
+
+def _tmdb_title_matches(query: str, result: dict[str, Any]) -> bool:
+    query_title = _normalize_compare_title(query)
+    candidates = {
+        _normalize_compare_title(str(value))
+        for value in (result.get("title"), result.get("original_title"))
+        if value
+    }
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if query_title == candidate:
+            return True
+        if len(query_title) >= 8 and (query_title in candidate or candidate in query_title):
+            return True
+        if difflib.SequenceMatcher(None, query_title, candidate).ratio() >= 0.82:
+            return True
+    return False
 
 
 def apply_plan(plan_path: Path) -> dict[str, Any]:
