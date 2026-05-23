@@ -35,7 +35,7 @@ annotate_guest() {
     local ip="$3"
 
     # Check if already annotated
-    if grep -q "Access links:" "$config_file"; then
+    if grep -q "proxmox-annotate" "$config_file"; then
         echo "  $ARROW $name — already annotated"
         ((SKIPPED++))
         return
@@ -81,7 +81,7 @@ annotate_guest() {
     done
 
     # Build HTML with clickable links
-    html_lines=("#")
+    html_lines=("# <!-- proxmox-annotate -->")
     html_lines+=("# <div align='center' style='margin-top: 10px;'>")
 
     if [ -n "${CADDY_PORT[$name]:-}" ]; then
