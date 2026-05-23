@@ -39,6 +39,47 @@ class MovieNameParsingTests(unittest.TestCase):
         self.assertIsNone(parsed.year)
         self.assertEqual(parsed.reason, "missing-year")
 
+    def test_keeps_valid_title_words_that_can_also_be_release_groups(self):
+        silence = movie_common.parse_movie_name("The.Silence.of.the.Lambs.1991.1080p.BluRay.mkv")
+        horizon = movie_common.parse_movie_name("Event.Horizon.1997.1080p.BluRay.mkv")
+
+        self.assertEqual(silence.title, "The Silence of the Lambs")
+        self.assertEqual(silence.year, "1991")
+        self.assertEqual(horizon.title, "Event Horizon")
+        self.assertEqual(horizon.year, "1997")
+
+    def test_removes_trailing_release_group_after_release_noise(self):
+        parsed = movie_common.parse_movie_name(
+            "Goodbye.to.Language.[Adieu.au.Langage].2014.BRRip.x264.HORiZON-ArtSubs.mkv"
+        )
+
+        self.assertEqual(parsed.title, "Goodbye to Language")
+        self.assertEqual(parsed.year, "2014")
+
+    def test_removes_contextual_edition_tags_without_leaving_cut_or_collection(self):
+        new_world = movie_common.parse_movie_name("2005 The.New.World.2005.Extended.Cut.720p.BluRay.X264-AMIABLE")
+        thin_red_line = movie_common.parse_movie_name("1998 The Thin Red Line 1998 Criterion Collection 720p BRRip x264-HDLiTE")
+
+        self.assertEqual(new_world.title, "The New World")
+        self.assertEqual(new_world.year, "2005")
+        self.assertEqual(thin_red_line.title, "The Thin Red Line")
+        self.assertEqual(thin_red_line.year, "1998")
+
+    def test_removes_empty_parentheses_left_by_release_noise(self):
+        parsed = movie_common.parse_movie_name("Before Midnight (2013) Criterion (1080p BluRay x265 HEVC 10bit AAC 5.1 Silence)")
+
+        self.assertEqual(parsed.title, "Before Midnight")
+        self.assertEqual(parsed.year, "2013")
+
+    def test_preserves_ambiguous_words_when_they_are_part_of_title(self):
+        web = movie_common.parse_movie_name("Charlotte's Web.2006.1080p.BluRay.mkv")
+        proper = movie_common.parse_movie_name("A.Proper.Violence.2011.720p.WEBRip.mkv")
+        sample = movie_common.parse_movie_name("Sample.This.2012.1080p.BluRay.mkv")
+
+        self.assertEqual(web.title, "Charlotte's Web")
+        self.assertEqual(proper.title, "A Proper Violence")
+        self.assertEqual(sample.title, "Sample This")
+
 
 class ScannerTests(unittest.TestCase):
     def test_scanner_ignores_macos_appledouble_video_artifacts(self):
@@ -182,6 +223,20 @@ class ManifestAndApplyTests(unittest.TestCase):
         self.assertEqual(manifest["actions"], [])
         self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
 
+    def test_single_video_folder_prefers_video_name_when_it_has_year(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "Godard"
+            folder.mkdir()
+            (folder / "Goodbye.to.Language.[Adieu.au.Langage].2014.BRRip.x264.HORiZON-ArtSubs.mkv").write_text("", encoding="utf-8")
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", side_effect=AssertionError("TMDB should not be called")):
+                manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+
+        self.assertEqual(len(manifest["actions"]), 1)
+        self.assertEqual(Path(manifest["actions"][0]["target"]).name, "Goodbye to Language (2014)")
+        self.assertEqual(manifest["actions"][0]["reason"], "single-video-folder:local-year")
+
 
 class TmdbReviewDetailsTests(unittest.TestCase):
     def test_missing_key_shows_not_configured_message(self):
@@ -241,6 +296,27 @@ class TmdbReviewDetailsTests(unittest.TestCase):
 
             with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):
                 manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+
+        self.assertEqual(manifest["actions"], [])
+        self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
+
+    def test_cached_distant_tmdb_match_is_ignored(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "I'm Here.avi").write_text("", encoding="utf-8")
+            cache_path = root / movie_common.DEFAULT_CACHE_NAME
+            cache_path.write_text(
+                json.dumps({"I'm Here|": {"id": 43939, "title": "I'm Still Here", "year": "2010"}}),
+                encoding="utf-8",
+            )
+
+            mock_response = unittest.mock.MagicMock()
+            mock_response.read.return_value = b'{"results": []}'
+            mock_response.__enter__.return_value = mock_response
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):
+                manifest = movie_common.build_plan(root, cache_path=cache_path, tmdb_api_key="fake_key")
 
         self.assertEqual(manifest["actions"], [])
         self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")

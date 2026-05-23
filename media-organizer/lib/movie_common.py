@@ -44,17 +44,30 @@ CD_PART_RE = re.compile(
 )
 NOISE_RE = re.compile(
     r"\b("
-    r"480p|576p|720p|1080p|2160p|4k|uhd|hdr|hdtv|web[-_. ]?dl|webrip|web|"
+    r"480p|576p|720p|1080p|2160p|4k|uhd|hdr|hdtv|web[-_. ]?dl|webrip|"
     r"brrip|bluray|blu[-_. ]?ray|bdrip|dvdrip|dvd[-_. ]?rip|dvdscr|xvid|divx|"
     r"x264|x265|h264|h\.264|h265|h\.265|hevc|aac|dts|dd5|ddp5|10bit|8bit|"
-    r"yify|yts|rarbg|anoXmous|publichd|psychd|ctrlhd|gaz|silence|proper|"
-    r"repack|extended|unrated|directors? cut|criterion|swesub|multi|sample"
+    r"yify|yts|rarbg|anoXmous|publichd|psychd|ctrlhd|gaz|"
+    r"repack|swesub"
     r")\b",
     re.IGNORECASE,
 )
 INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 SPACING_RE = re.compile(r"\s+")
 SAMPLE_VIDEO_RE = re.compile(r"(^|[\s._\-[\]()])sample($|[\s._\-[\]()])", re.IGNORECASE)
+EDITION_TAG_RE = re.compile(
+    r"\b("
+    r"extended\s+cut|directors?\s+cut|criterion\s+collection|criterion|"
+    r"unrated|remastered|special\s+edition"
+    r")\b",
+    re.IGNORECASE,
+)
+TRAILING_RELEASE_GROUP_RE = re.compile(
+    r"\b(480p|576p|720p|1080p|2160p|4k|uhd|hdr|hdtv|web[-_. ]?dl|webrip|web|"
+    r"brrip|bluray|blu[-_. ]?ray|bdrip|dvdrip|dvd[-_. ]?rip|x264|x265|h264|h265|hevc)"
+    r"\s+(?:horizon|silence)\b\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -111,22 +124,27 @@ def parse_movie_name(raw_name: str) -> ParsedName:
     name = re.sub(r"[._]+", " ", name)
     name = re.sub(r"\s+-\s+[^-]*$", " ", name)
     name = CD_PART_RE.sub(" ", name)
+    name = EDITION_TAG_RE.sub(" ", name)
 
     year: str | None = None
     leading_year = LEADING_YEAR_RE.match(name)
     if leading_year:
         year = leading_year.group(1)
         name = leading_year.group(2)
+        name = re.sub(rf"(?<!\d){re.escape(year)}(?!\d)", " ", name)
     else:
         year_match = YEAR_RE.search(name)
         if year_match:
             year = year_match.group(1)
             name = name[: year_match.start()] + " " + name[year_match.end() :]
 
+    name = TRAILING_RELEASE_GROUP_RE.sub(r"\1 ", name)
     name = NOISE_RE.sub(" ", name)
     name = re.sub(r"\b(?:cd|disc|disk|dvd)[\s._-]*0?[1-9]\b", " ", name, flags=re.IGNORECASE)
     name = re.sub(r"\b(?:eng|pob|por|ptbr|subpack|subs?)\b", " ", name, flags=re.IGNORECASE)
     name = re.sub(r"[-_,;]+", " ", name)
+    name = re.sub(r"\(\s*\)", " ", name)
+    name = re.sub(r"\[\s*\]", " ", name)
     name = SPACING_RE.sub(" ", name).strip(" .-_")
 
     title = title_case(name) if name else title_case(original)
@@ -148,7 +166,9 @@ def title_case(value: str) -> str:
         elif index > 0 and lower in small_words:
             titled.append(lower)
         else:
-            titled.append("'".join(part[:1].upper() + part[1:].lower() for part in word.split("'")))
+            parts = word.split("'")
+            first = parts[0][:1].upper() + parts[0][1:].lower()
+            titled.append("'".join([first, *(part.lower() for part in parts[1:])]))
     return " ".join(titled)
 
 
@@ -289,7 +309,7 @@ def build_plan(
     messages: list[dict[str, Any]] = []
 
     for candidate in candidates:
-        parsed = parse_movie_name(candidate.evidence_name)
+        parsed = best_local_parse(candidate)
         tmdb_result = None
         tmdb_error = None
         if not parsed.year and tmdb_api_key:
@@ -386,6 +406,17 @@ def build_plan(
     return manifest
 
 
+def best_local_parse(candidate: MovieCandidate) -> ParsedName:
+    parsed = parse_movie_name(candidate.evidence_name)
+    if parsed.year or len(candidate.video_files) != 1:
+        return parsed
+
+    video_parsed = parse_movie_name(candidate.video_files[0].name)
+    if video_parsed.year:
+        return video_parsed
+    return parsed
+
+
 def detect_conflicts(source: Path, target: Path, action_type: str) -> list[str]:
     if action_type == "rename_folder":
         if target.exists() and source.resolve() != target.resolve():
@@ -440,7 +471,10 @@ def _can_share_planned_target(actions: list[dict[str, Any]]) -> bool:
 def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     cache_key = f"{query}|{year or ''}"
     if cache_key in cache and cache[cache_key] is not None:
-        return cache[cache_key], None
+        cached_result = cache[cache_key]
+        if isinstance(cached_result, dict) and _tmdb_title_matches(query, cached_result):
+            return cached_result, None
+        cache.pop(cache_key, None)
 
     params = {"query": query}
     if year:
