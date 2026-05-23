@@ -476,7 +476,7 @@ def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any
     cache_key = f"{query}|{year or ''}"
     if cache_key in cache and cache[cache_key] is not None:
         cached_result = cache[cache_key]
-        if isinstance(cached_result, dict) and _tmdb_title_matches(query, cached_result):
+        if isinstance(cached_result, dict) and _is_acceptable_tmdb_result(query, cached_result):
             return cached_result, None
         cache.pop(cache_key, None)
 
@@ -525,9 +525,19 @@ def _best_tmdb_result(results: list[dict[str, Any]], year: str | None, query: st
     if not selected:
         return None
     release_year = str(selected.get("release_date", ""))[:4] or None
-    if release_year and int(release_year) > datetime.now(timezone.utc).year + 1:
+    if not _is_acceptable_release_year(release_year):
         return None
     return {"id": selected.get("id"), "title": selected.get("title") or selected.get("original_title"), "year": release_year}
+
+
+def _is_acceptable_tmdb_result(query: str, result: dict[str, Any]) -> bool:
+    return _tmdb_title_matches(query, result) and _is_acceptable_release_year(str(result.get("year") or result.get("release_date", ""))[:4] or None)
+
+
+def _is_acceptable_release_year(year: str | None) -> bool:
+    if not year:
+        return True
+    return int(year) <= datetime.now(timezone.utc).year + 1
 
 
 def _tmdb_title_matches(query: str, result: dict[str, Any]) -> bool:

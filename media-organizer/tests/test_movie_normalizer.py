@@ -368,6 +368,27 @@ class TmdbReviewDetailsTests(unittest.TestCase):
         self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
         self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
 
+    def test_cached_future_tmdb_match_is_ignored(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "The Beatles - Live at Shea Stadium 1965 [XviD].avi").write_text("", encoding="utf-8")
+            cache_path = root / movie_common.DEFAULT_CACHE_NAME
+            cache_path.write_text(
+                json.dumps({"The Beatles|": {"id": 1247606, "title": "The Beatles Ringo", "year": "2099"}}),
+                encoding="utf-8",
+            )
+
+            mock_response = unittest.mock.MagicMock()
+            mock_response.read.return_value = b'{"results": []}'
+            mock_response.__enter__.return_value = mock_response
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):
+                manifest = movie_common.build_plan(root, cache_path=cache_path, tmdb_api_key="fake_key")
+
+        self.assertEqual(manifest["actions"], [])
+        self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
+        self.assertEqual(manifest["messages"][0]["code"], "tmdb-no-results")
+
     def test_cached_none_does_not_hide_later_tmdb_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
