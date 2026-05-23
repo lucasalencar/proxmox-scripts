@@ -274,8 +274,9 @@ def build_plan(
     for candidate in candidates:
         parsed = parse_movie_name(candidate.evidence_name)
         tmdb_result = None
+        tmdb_error = None
         if not parsed.year and tmdb_api_key:
-            tmdb_result = search_tmdb(parsed.title, parsed.year, tmdb_api_key, cache)
+            tmdb_result, tmdb_error = search_tmdb(parsed.title, parsed.year, tmdb_api_key, cache)
             if tmdb_result:
                 parsed = ParsedName(
                     title=tmdb_result["title"],
@@ -285,11 +286,18 @@ def build_plan(
                 )
 
         if not parsed.year:
+            if tmdb_api_key:
+                if tmdb_error == "network":
+                    details = "No local year found and TMDB search failed (network error)"
+                else:
+                    details = "No local year found and TMDB search returned no results"
+            else:
+                details = "No local year found and TMDB_API_KEY is not configured"
             review_items.append(
                 {
                     "source": str(candidate.source),
                     "reason": "missing-year-review-required",
-                    "details": "No local year found and TMDB_API_KEY is not available or returned no result",
+                    "details": details,
                 }
             )
             continue
@@ -355,10 +363,10 @@ def detect_conflicts(source: Path, target: Path, action_type: str) -> list[str]:
     return []
 
 
-def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any]) -> dict[str, Any] | None:
+def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     cache_key = f"{query}|{year or ''}"
     if cache_key in cache:
-        return cache[cache_key]
+        return cache[cache_key], None
 
     params = {"query": query}
     if year:
@@ -371,11 +379,11 @@ def search_tmdb(query: str, year: str | None, api_key: str, cache: dict[str, Any
             payload = json.loads(response.read().decode("utf-8"))
     except Exception:
         cache[cache_key] = None
-        return None
+        return None, "network"
 
     result = _best_tmdb_result(payload.get("results", []), year)
     cache[cache_key] = result
-    return result
+    return result, None
 
 
 def _best_tmdb_result(results: list[dict[str, Any]], year: str | None) -> dict[str, Any] | None:

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -137,6 +138,50 @@ class ManifestAndApplyTests(unittest.TestCase):
 
         self.assertEqual(manifest["actions"], [])
         self.assertEqual(manifest["review"][0]["reason"], "missing-year-review-required")
+
+
+class TmdbReviewDetailsTests(unittest.TestCase):
+    def test_missing_key_shows_not_configured_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "Raul O Inicio O Fim e o Meio"
+            folder.mkdir()
+            (folder / "Raul.O.Inicio.O.Fim.e.o.Meio.DVDRip.XviD-3LT0N.avi").write_text("", encoding="utf-8")
+
+            manifest = movie_common.build_plan(root, tmdb_api_key=None)
+
+        self.assertEqual(len(manifest["review"]), 1)
+        self.assertIn("not configured", manifest["review"][0]["details"])
+
+    def test_network_error_shows_network_error_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "Raul O Inicio O Fim e o Meio"
+            folder.mkdir()
+            (folder / "Raul.O.Inicio.O.Fim.e.o.Meio.DVDRip.XviD-3LT0N.avi").write_text("", encoding="utf-8")
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", side_effect=OSError("Connection refused")):
+                manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+
+        self.assertEqual(len(manifest["review"]), 1)
+        self.assertIn("network error", manifest["review"][0]["details"])
+
+    def test_no_results_shows_no_results_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder = root / "Raul O Inicio O Fim e o Meio"
+            folder.mkdir()
+            (folder / "Raul.O.Inicio.O.Fim.e.o.Meio.DVDRip.XviD-3LT0N.avi").write_text("", encoding="utf-8")
+
+            mock_response = unittest.mock.MagicMock()
+            mock_response.read.return_value = b'{"results": []}'
+            mock_response.__enter__.return_value = mock_response
+
+            with unittest.mock.patch.object(movie_common.urllib.request, "urlopen", return_value=mock_response):
+                manifest = movie_common.build_plan(root, tmdb_api_key="fake_key")
+
+        self.assertEqual(len(manifest["review"]), 1)
+        self.assertIn("returned no results", manifest["review"][0]["details"])
 
 
 class CliTests(unittest.TestCase):

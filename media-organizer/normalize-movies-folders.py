@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     plan_path = Path(args.plan).expanduser().resolve() if args.plan else root / movie_common.DEFAULT_PLAN_NAME
     review_path = Path(args.review_csv).expanduser().resolve() if args.review_csv else root / movie_common.DEFAULT_REVIEW_NAME
     cache_path = Path(args.cache).expanduser().resolve() if args.cache else root / movie_common.DEFAULT_CACHE_NAME
+    if not os.environ.get("TMDB_API_KEY"):
+        print("Warning: TMDB_API_KEY not set. Movies without a detectable year will go to review.", file=sys.stderr)
     manifest = movie_common.build_plan(
         root=root,
         plan_path=plan_path,
