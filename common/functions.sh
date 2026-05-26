@@ -66,6 +66,28 @@ ensure_container_installed() {
     echo "$container_id"
 }
 
+# Returns the VM ID by its name (partial match, case-insensitive)
+# Usage: get_vm_id_by_name "name"
+get_vm_id_by_name() {
+    local name="$1"
+    [ -z "$name" ] && return 1
+    qm list 2>/dev/null | awk -v p="$name" '
+        NR>1 && tolower($2) ~ tolower(p) { print $1; exit }
+    '
+}
+
+# Returns the primary IP of a VM via guest agent (fallback ipconfig from config)
+# Usage: vm_ip=$(get_vm_ip <vmid>)
+get_vm_ip() {
+    local vmid="$1"
+    local ip
+    ip=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | jq -r '.["out-data"] // .["out"] // empty' | awk '{print $1}')
+    if [ -z "$ip" ]; then
+        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^/]+' | head -1)
+    fi
+    echo "$ip"
+}
+
 # Returns the primary IP of a container by its ID.
 # Usage: container_ip=$(get_container_ip <container_id>)
 get_container_ip() {
