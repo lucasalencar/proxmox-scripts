@@ -61,3 +61,5 @@ During a session, append any non-obvious fix, recurring pitfall, or design decis
 ```markdown
 - **Title:** What was learned — brief explanation and the resolution.
 ```
+
+Do **not** duplicate rules already explicitly stated in `AGENTS.md` as learnings — only capture knowledge that goes beyond these rules.
