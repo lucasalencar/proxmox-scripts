@@ -65,3 +65,8 @@ test-first.
 - Source `common/functions.sh` and use the provided helpers.
 - For root-only scripts that need to act on behalf of the primary user, use
   `get_primary_user` / `get_primary_user_home` and `su -c "..." "$TARGET_USER"`.
+
+### 7. Package install/update symmetry
+
+Every package that provides an `install.sh` script must also provide an
+`update.sh` script for updating that package.
