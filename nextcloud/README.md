@@ -23,5 +23,7 @@ Nextcloud is auto-detected by `caddy/generate-caddyfile.sh`. Run it after instal
 ```
 install.sh
 caddy/generate-caddyfile.sh   (optional, for reverse proxy)
+caddy/trust-nextcloud.sh      (optional, configures Nextcloud to trust Caddy)
+caddy/trust-nextcloud-restore.sh (undo trust-nextcloud.sh changes)
 update.sh                      (run any time to upgrade)
 ```
