@@ -60,26 +60,81 @@ if ! python3 -c "import yaml" &>/dev/null; then
     apt-get install -y -qq python3-yaml
 fi
 
-# --- Stop VM ---
-echo "Stopping VM $HA_VMID..."
-qm stop "$HA_VMID"
+# --- Stop VM gracefully ---
+echo "Shutting down VM $HA_VMID..."
+if qm shutdown "$HA_VMID" --timeout 60 2>/dev/null; then
+    for i in $(seq 1 30); do
+        qm status "$HA_VMID" 2>/dev/null | grep -q "stopped" && break
+        sleep 2
+    done
+fi
+if qm status "$HA_VMID" 2>/dev/null | grep -q "running"; then
+    echo "Force stopping VM $HA_VMID..."
+    qm stop "$HA_VMID"
+fi
+sleep 3
 
 # --- Inject config via guestfish ---
 TEMP_CONFIG="/tmp/ha-config-${HA_VMID}.yaml"
 DISK_DEVICE="/dev/pve/vm-${HA_VMID}-disk-0"
 
+echo "Locating hassos-data partition..."
+DATA_DEVICE=$(guestfish --ro -a "$DISK_DEVICE" run : findfs-label hassos-data 2>/dev/null)
+if [ -z "$DATA_DEVICE" ]; then
+    echo "Error: Could not find hassos-data partition on disk."
+    exit 1
+fi
+echo "Data partition: $DATA_DEVICE"
+
 echo "Reading current configuration..."
-guestfish --add "$DISK_DEVICE" -i \
-    download /supervisor/homeassistant/configuration.yaml "$TEMP_CONFIG" 2>/dev/null || {
-    echo "No existing configuration.yaml, starting fresh."
+guestfish --rw -a "$DISK_DEVICE" <<GUESTFISH 2>/dev/null
+run
+mount $DATA_DEVICE /
+download /supervisor/homeassistant/configuration.yaml $TEMP_CONFIG
+GUESTFISH
+READ_OK=$?
+if [ $READ_OK -ne 0 ] || [ ! -s "$TEMP_CONFIG" ]; then
+    echo "No existing configuration.yaml found, starting fresh."
     echo "{}" > "$TEMP_CONFIG"
-}
+else
+    BACKUP_DIR="/var/backups/haos-config"
+    mkdir -p "$BACKUP_DIR"
+    BACKUP_FILE="$BACKUP_DIR/configuration.yaml.$(date +%Y%m%d-%H%M%S)"
+    cp "$TEMP_CONFIG" "$BACKUP_FILE"
+    echo "Backup saved: $BACKUP_FILE"
+fi
 
 echo "Merging proxy configuration..."
 python3 -c "
 import yaml
+
+class PreservedTag:
+    def __init__(self, tag, value):
+        self.tag = tag
+        self.value = value
+
+def preserve_tag(loader, suffix, node):
+    if isinstance(node, yaml.ScalarNode):
+        value = loader.construct_scalar(node)
+    elif isinstance(node, yaml.SequenceNode):
+        value = loader.construct_sequence(node)
+    else:
+        value = loader.construct_mapping(node)
+    return PreservedTag('!' + suffix, value)
+
+def tag_representer(dumper, data):
+    v = data.value
+    if isinstance(v, dict):
+        return dumper.represent_mapping(data.tag, v)
+    if isinstance(v, (list, tuple)):
+        return dumper.represent_sequence(data.tag, v)
+    return dumper.represent_scalar(data.tag, v, style='')
+
+yaml.add_multi_constructor('!', preserve_tag, Loader=yaml.SafeLoader)
+yaml.add_multi_representer(PreservedTag, tag_representer)
+
 with open('$TEMP_CONFIG') as f:
-    config = yaml.safe_load(f) or {}
+    config = yaml.load(f, Loader=yaml.SafeLoader) or {}
 if 'http' not in config:
     config['http'] = {}
 config['http']['use_x_forwarded_for'] = True
@@ -92,8 +147,11 @@ with open('$TEMP_CONFIG', 'w') as f:
 "
 
 echo "Writing configuration back..."
-guestfish --add "$DISK_DEVICE" -i \
-    upload "$TEMP_CONFIG" /supervisor/homeassistant/configuration.yaml
+guestfish --rw -a "$DISK_DEVICE" <<GUESTFISH
+run
+mount $DATA_DEVICE /
+upload $TEMP_CONFIG /supervisor/homeassistant/configuration.yaml
+GUESTFISH
 
 rm -f "$TEMP_CONFIG"
 
