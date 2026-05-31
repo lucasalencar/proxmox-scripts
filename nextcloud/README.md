@@ -7,6 +7,7 @@ Self-hosted file sync and share platform (LXC container via NextcloudPi).
 | Script | Description |
 |---|---|
 | `install.sh` | Creates the LXC container and installs NextcloudPi. |
+| `sync-users.sh` | Syncs server users from `.server_users` to Nextcloud. |
 | `update.sh` | Updates packages and runs NextcloudPi/Nextcloud upgrade. |
 
 ## Caddy compatibility
