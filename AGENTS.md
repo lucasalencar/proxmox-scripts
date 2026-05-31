@@ -56,10 +56,12 @@ At the start of every session, read `LEARNINGS.md` at the repository root. It co
 
 ### 10. Learnings file — write
 
-During a session, append any non-obvious fix, recurring pitfall, or design decision worth remembering to `LEARNINGS.md`. Write entries that are generic and actionable so future sessions benefit. Use simple bullet points:
+During a session, append any non-obvious fix, recurring pitfall, or design decision worth remembering to `LEARNINGS.md`. Write entries that are **generic and actionable** so future sessions benefit. Use simple bullet points:
 
 ```markdown
 - **Title:** What was learned — brief explanation and the resolution.
 ```
 
 Do **not** duplicate rules already explicitly stated in `AGENTS.md` as learnings — only capture knowledge that goes beyond these rules.
+
+**Keep learnings generalizable** — they should describe patterns, behaviors, or pitfalls that could apply to multiple scripts or contexts, not specific fixes applied to a particular script. For example, prefer "Proxmox `pct exec` does not support `--env`; use `env KEY=val` inside the container command instead" over "Fixed sync-users.sh by using env instead of --env".
