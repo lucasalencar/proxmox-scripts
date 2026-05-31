@@ -16,21 +16,77 @@ require_non_root() {
     fi
 }
 
-# Returns the primary username from .primary_user file
+# Returns the primary username from .server_users file (first user in the list)
 get_primary_user() {
     local script_dir
     script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-    local primary_user_file="$script_dir/../.primary_user"
+    local users_file="$script_dir/../.server_users"
 
-    if [ ! -f "$primary_user_file" ]; then
-        echo "Error: .primary_user file not found. Run 001-root-setup.sh first." >&2
+    if [ ! -f "$users_file" ]; then
+        echo "Error: .server_users file not found. Run 001-root-setup.sh first." >&2
         return 1
     fi
 
-    cat "$primary_user_file"
+    head -n 1 "$users_file"
 }
 
-# Returns the home directory of the primary user from .primary_user file.
+# Returns all registered server usernames from .server_users file
+# Usage: for user in $(get_all_users); do echo "$user"; done
+get_all_users() {
+    local script_dir
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    local users_file="$script_dir/../.server_users"
+
+    if [ ! -f "$users_file" ]; then
+        echo "Error: .server_users file not found. Run 001-root-setup.sh first." >&2
+        return 1
+    fi
+
+    cat "$users_file"
+}
+
+# Checks if a username is already registered in .server_users
+# Usage: if is_user_registered "lucas"; then echo "exists"; fi
+is_user_registered() {
+    local username="$1"
+    [ -z "$username" ] && return 1
+
+    local script_dir
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    local users_file="$script_dir/../.server_users"
+
+    if [ ! -f "$users_file" ]; then
+        return 1
+    fi
+
+    grep -qx "$username" "$users_file"
+}
+
+# Adds a username to the end of .server_users if not already registered
+# Usage: add_user_to_server "jacque" || exit 1
+add_user_to_server() {
+    local username="$1"
+    [ -z "$username" ] && return 1
+
+    local script_dir
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    local users_file="$script_dir/../.server_users"
+
+    if [ ! -f "$users_file" ]; then
+        echo "Error: .server_users file not found. Run 001-root-setup.sh first." >&2
+        return 1
+    fi
+
+    if is_user_registered "$username"; then
+        echo "User '$username' is already registered."
+        return 0
+    fi
+
+    echo "$username" >> "$users_file"
+    echo "User '$username' added to .server_users."
+}
+
+# Returns the home directory of the primary user.
 # Usage: TARGET_HOME=$(get_primary_user_home)
 get_primary_user_home() {
     local user

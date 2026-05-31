@@ -41,3 +41,6 @@ echo ""
 echo "Secondary user setup complete! Access granted to media and memories datasets."
 echo "Note: If a private dataset is needed for $SECONDARY_USER, run:"
 echo "  ./storage-setup/create-user-dataset.sh $SECONDARY_USER"
+
+# 3. Register user in .server_users
+add_user_to_server "$SECONDARY_USER"

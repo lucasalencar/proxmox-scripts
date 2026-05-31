@@ -1,5 +1,5 @@
 MACHINE.md
-.primary_user
+.server_users
 
 # Generated Caddyfile with container mappings (regenerated on each run)
 caddy/Caddyfile.local

@@ -35,8 +35,8 @@ else
 fi
 
 # Save primary user for other scripts
-echo "Persisting primary user '$SSH_USER' to .primary_user..."
-echo "$SSH_USER" > "$(dirname "$0")/../.primary_user"
+echo "Persisting primary user '$SSH_USER' to .server_users..."
+echo "$SSH_USER" > "$(dirname "$0")/../.server_users"
 
 # Rename GID 1000 to 'familia' for shared access
 CURRENT_GROUP_NAME=$(getent group 1000 | cut -d: -f1)
