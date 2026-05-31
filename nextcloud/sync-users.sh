@@ -34,13 +34,17 @@ for username in $users; do
     display_name="${username^}"
 
     echo "Creating Nextcloud user '$username' (display: '$display_name')..."
-    pct exec "$container_id" -- sudo -u www-data php /var/www/nextcloud/occ user:add \
-        --display-name="$display_name" \
-        --no-interaction \
-        "$username"
 
-    if [ $? -eq 0 ]; then
-        echo "User '$username' created successfully. They will set their password on first login."
+    password=$(openssl rand -base64 12)
+
+    pct exec "$container_id" -- sudo -u www-data env "NC_PASS=$password" php /var/www/nextcloud/occ user:add \
+        --display-name="$display_name" \
+        --password-from-env \
+        "$username"
+    rc=$?
+
+    if [ $rc -eq 0 ]; then
+        echo "User '$username' created successfully. Temporary password: $password"
         created=$((created + 1))
     else
         echo "Error: Failed to create user '$username'."
