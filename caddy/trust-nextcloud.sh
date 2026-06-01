@@ -6,10 +6,10 @@
 # as a trusted proxy, and forces HTTPS protocol detection.
 #
 # Usage:
-#   ./trust-nextcloud.sh                             # auto-detect container + Caddy
-#   ./trust-nextcloud.sh --container CONTAINER_ID    # explicit container
-#   ./trust-nextcloud.sh --domain nextcloud.example.com
-#   ./trust-nextcloud.sh --caddy-ip X.X.X.X
+#   ./trust-nextcloud.sh                                   # auto-detect container + Caddy
+#   ./trust-nextcloud.sh --container CONTAINER_ID          # explicit container
+#   ./trust-nextcloud.sh --domain marx.home                # parent domain (default: marx.home)
+#   ./trust-nextcloud.sh --caddy-ip X.X.X.X                # explicit Caddy IP
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/functions.sh"
@@ -34,6 +34,9 @@ done
 # --- Discover Nextcloud container ---
 if [ -z "$NC_CONTAINER" ]; then
     NC_CONTAINER=$(get_container_id_by_name "nextcloud")
+    if [ -z "$NC_CONTAINER" ]; then
+        NC_CONTAINER=$(get_container_id_by_name "nextcloudpi")
+    fi
 fi
 if [ -z "$NC_CONTAINER" ] || ! pct status "$NC_CONTAINER" &>/dev/null; then
     echo "Error: Nextcloud container not found. Use --container or install Nextcloud first."
@@ -63,6 +66,14 @@ if [ -z "$CADDY_IP" ]; then
     echo "Skipping trusted_proxies and overwriteprotocol config."
 fi
 
+# --- Remove Apache HTTP->HTTPS redirect (conflicts with Caddy reverse proxy) ---
+echo "Removing Apache HTTP-to-HTTPS redirect rule (port 80)..."
+APACHE_CONF="/etc/apache2/sites-available/000-default.conf"
+pct exec "$NC_CONTAINER" -- sed -i '/RewriteCond %{HTTPS} !=on/,/RewriteRule/d' "$APACHE_CONF" 2>/dev/null
+pct exec "$NC_CONTAINER" -- apache2ctl configtest 2>/dev/null && \
+    pct exec "$NC_CONTAINER" -- systemctl reload apache2 2>/dev/null
+echo ""
+
 # --- Backup current config.php ---
 BACKUP_DIR="/var/backups/nextcloud-config"
 echo "Backing up config.php..."
@@ -76,7 +87,7 @@ echo ""
 # --- Add trusted domain ---
 echo "Adding $NC_DOMAIN to Nextcloud trusted_domains..."
 pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
-    config:system:set trusted_domains 1 --value="$NC_DOMAIN" 2>&1 || {
+    config:system:set trusted_domains --index 50 --value="$NC_DOMAIN" 2>&1 || {
     echo "Error: Failed to add trusted domain. Check container $NC_CONTAINER."
     exit 1
 }
@@ -85,7 +96,7 @@ pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
 if [ -n "$CADDY_IP" ]; then
     echo "Adding Caddy IP $CADDY_IP as trusted proxy..."
     pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
-        config:system:set trusted_proxies 0 --value="$CADDY_IP" 2>&1
+        config:system:set trusted_proxies --index 50 --value="$CADDY_IP" 2>&1
 
     echo "Setting overwriteprotocol to https..."
     pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \

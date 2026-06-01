@@ -175,7 +175,8 @@ echo ""
         name="${GUEST_NAMES[$i]}"
         ip="${GUEST_IPS[$name]}"
         port="${PORT_MAP[$name]}"
-        echo "http://$name.$DOMAIN {"
+        echo "$name.$DOMAIN {"
+        echo "    tls internal"
         echo "    reverse_proxy $ip:$port"
         echo "}"
         echo ""
@@ -190,6 +191,16 @@ pct push "$CADDY_ID" "$LOCAL_CADDYFILE" /etc/caddy/Caddyfile
 
 echo "Reloading Caddy..."
 pct exec "$CADDY_ID" -- systemctl reload caddy
+
+# --- If any Nextcloud guest is configured, run trust-nextcloud.sh ---
+for i in $(seq 0 $((TOTAL - 1))); do
+    name="${GUEST_NAMES[$i]}"
+    if [[ "$name" == nextcloud* ]]; then
+        echo ""
+        echo "=== Configuring Nextcloud ($name) to trust Caddy... ==="
+        "$SCRIPT_DIR/trust-nextcloud.sh" --container "${GUEST_IDS[$i]}" --domain "$DOMAIN"
+    fi
+done
 
 echo ""
 echo "Done! Caddy reloaded with latest configuration."

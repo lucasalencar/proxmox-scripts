@@ -30,6 +30,9 @@ done
 # --- Discover Nextcloud container ---
 if [ -z "$NC_CONTAINER" ]; then
     NC_CONTAINER=$(get_container_id_by_name "nextcloud")
+    if [ -z "$NC_CONTAINER" ]; then
+        NC_CONTAINER=$(get_container_id_by_name "nextcloudpi")
+    fi
 fi
 if [ -z "$NC_CONTAINER" ] || ! pct status "$NC_CONTAINER" &>/dev/null; then
     echo "Error: Nextcloud container not found. Use --container or install Nextcloud first."
