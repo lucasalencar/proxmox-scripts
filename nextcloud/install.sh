@@ -29,6 +29,9 @@ echo "Setting admin user '$ADMIN_USER' password..."
 pct exec "$container_id" -- bash -c \
     "OC_PASS='$ADMIN_PASS' sudo -E -u www-data php /var/www/nextcloud/occ user:resetpassword --password-from-env '$ADMIN_USER'" 2>/dev/null
 
+echo "Moving Nextcloud data directory to ZFS dataset on HDD..."
+"$SCRIPT_DIR/setup-storage.sh"
+
 echo ""
 echo "Installation complete. Nextcloud is running in container $container_id."
 echo ""
