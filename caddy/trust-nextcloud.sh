@@ -84,10 +84,18 @@ echo "Backup saved: $BACKUP_FILE (inside container $NC_CONTAINER)"
 
 echo ""
 
+# --- Detect occ --index support (removed in Nextcloud 30+) ---
+if pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
+    config:system:set --help 2>/dev/null | grep -q -- "--index"; then
+    INDEX_ARG="--index 50"
+else
+    INDEX_ARG="50"
+fi
+
 # --- Add trusted domain ---
 echo "Adding $NC_DOMAIN to Nextcloud trusted_domains..."
 pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
-    config:system:set trusted_domains --index 50 --value="$NC_DOMAIN" 2>&1 || {
+    config:system:set trusted_domains $INDEX_ARG --value="$NC_DOMAIN" 2>&1 || {
     echo "Error: Failed to add trusted domain. Check container $NC_CONTAINER."
     exit 1
 }
@@ -96,7 +104,7 @@ pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
 if [ -n "$CADDY_IP" ]; then
     echo "Adding Caddy IP $CADDY_IP as trusted proxy..."
     pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
-        config:system:set trusted_proxies --index 50 --value="$CADDY_IP" 2>&1
+        config:system:set trusted_proxies $INDEX_ARG --value="$CADDY_IP" 2>&1
 
     echo "Setting overwriteprotocol to https..."
     pct exec "$NC_CONTAINER" -- sudo -u www-data php /var/www/nextcloud/occ \
