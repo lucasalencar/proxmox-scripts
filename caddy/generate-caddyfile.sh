@@ -30,12 +30,17 @@ echo ""
 
 # --- Load existing port mappings from Caddyfile.local ---
 declare -A PORT_MAP
+declare -A TLS_MAP
 
 if [ -f "$LOCAL_CADDYFILE" ]; then
     echo "Loading existing configuration from $LOCAL_CADDYFILE..."
     while IFS= read -r line; do
         if [[ $line =~ http://([^.]+)\.$DOMAIN[[:space:]]*\{ ]]; then
             current_name="${BASH_REMATCH[1]}"
+            TLS_MAP["$current_name"]="http"
+        elif [[ $line =~ ([^.]+)\.$DOMAIN[[:space:]]*\{ ]]; then
+            current_name="${BASH_REMATCH[1]}"
+            TLS_MAP["$current_name"]="https"
         elif [[ $line =~ reverse_proxy[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+) ]]; then
             if [ -n "${current_name:-}" ]; then
                 PORT_MAP["$current_name"]="${BASH_REMATCH[2]}"
@@ -44,8 +49,8 @@ if [ -f "$LOCAL_CADDYFILE" ]; then
         fi
     done < "$LOCAL_CADDYFILE"
 
-    if [ ${#PORT_MAP[@]} -gt 0 ]; then
-        echo "  Found ${#PORT_MAP[@]} saved mapping(s)"
+    if [ ${#PORT_MAP[@]} -gt 0 ] || [ ${#TLS_MAP[@]} -gt 0 ]; then
+        echo "  Found ${#PORT_MAP[@]} saved port mapping(s) and ${#TLS_MAP[@]} TLS setting(s)"
     fi
     echo ""
 fi
@@ -163,6 +168,21 @@ for i in $(seq 0 $((TOTAL - 1))); do
     fi
 
     PORT_MAP["$name"]="$port"
+
+    # --- Determine TLS mode for each guest ---
+    if [ -n "${TLS_MAP[$name]:-}" ]; then
+        echo "  $CHECK $name $ARROW saved TLS: $([ "${TLS_MAP[$name]}" = "https" ] && echo "HTTPS (tls internal)" || echo "HTTP")"
+    else
+        default_tls="http"
+        [[ "$name" == nextcloud* ]] && default_tls="https"
+        read -p "  HTTPS (tls internal) for $name.$DOMAIN? [Y/n] (default: $([ "$default_tls" = "https" ] && echo "Y" || echo "n")): " tls_choice
+        case "${tls_choice,,}" in
+            y|yes) TLS_MAP["$name"]="https" ;;
+            n|no)  TLS_MAP["$name"]="http" ;;
+            "")    TLS_MAP["$name"]="$default_tls" ;;
+            *)     TLS_MAP["$name"]="$default_tls" ;;
+        esac
+    fi
 done
 
 echo ""
@@ -175,8 +195,12 @@ echo ""
         name="${GUEST_NAMES[$i]}"
         ip="${GUEST_IPS[$name]}"
         port="${PORT_MAP[$name]}"
-        echo "$name.$DOMAIN {"
-        echo "    tls internal"
+        if [ "${TLS_MAP[$name]}" = "https" ]; then
+            echo "$name.$DOMAIN {"
+            echo "    tls internal"
+        else
+            echo "http://$name.$DOMAIN {"
+        fi
         echo "    reverse_proxy $ip:$port"
         echo "}"
         echo ""
