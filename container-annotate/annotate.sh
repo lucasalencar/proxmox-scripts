@@ -84,8 +84,11 @@ annotate_guest() {
     html_lines=("# <!-- proxmox-annotate -->")
     html_lines+=("# <div align='center' style='margin-top: 10px;'>")
 
+    tls=${CADDY_TLS[$name]:-0}
+    proto=$([ "$tls" = "1" ] && echo "https" || echo "http")
+
     if [ -n "${CADDY_PORT[$name]:-}" ]; then
-        url="http://$name.$DOMAIN"
+        url="$proto://$name.$DOMAIN"
         port="${CADDY_PORT[$name]}"
         html_lines+=("#   <p style='margin: 8px 0;'>")
         html_lines+=("#     <a href='$url' target='_blank' rel='noopener noreferrer' style='font-size: 14px; color: #00617f; text-decoration: none;'>$url</a>")
@@ -106,7 +109,7 @@ annotate_guest() {
     printf '%s\n' "${result[@]}" > "$config_file"
 
     if [ -n "${CADDY_PORT[$name]:-}" ]; then
-        echo "  $CHECK $name ($url / http://$ip:${CADDY_PORT[$name]})"
+        echo "  $CHECK $name ($url / $proto://$ip:${CADDY_PORT[$name]})"
     else
         echo "  $CHECK $name (http://$ip)"
     fi
@@ -119,11 +122,13 @@ echo ""
 # Build name -> port map from Caddyfile
 declare -A CADDY_PORT
 declare -A CADDY_IP
+declare -A CADDY_TLS
 
 if [ -f "$CADDYFILE" ]; then
     while IFS= read -r line; do
-        if [[ $line =~ http://([^.]+)\.$DOMAIN[[:space:]]*\{ ]]; then
-            current_name="${BASH_REMATCH[1]}"
+        if [[ $line =~ ^(http://)?([^.]+)\.$DOMAIN[[:space:]]*\{ ]]; then
+            current_name="${BASH_REMATCH[2]}"
+            CADDY_TLS["$current_name"]=$([ -z "${BASH_REMATCH[1]}" ] && echo 1 || echo 0)
         elif [[ $line =~ reverse_proxy[[:space:]]+(https?://)?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+) ]]; then
             if [ -n "${current_name:-}" ]; then
                 CADDY_PORT["$current_name"]="${BASH_REMATCH[3]}"

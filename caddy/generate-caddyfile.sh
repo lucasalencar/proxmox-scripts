@@ -228,6 +228,8 @@ done
 
 echo ""
 echo "Done! Caddy reloaded with latest configuration."
+echo ""
+echo "Next step: run ./container-annotate/annotate.sh to update container/VM descriptions with access links."
 if [ -n "$CADDY_IP" ]; then
     echo "If not already set, add a wildcard DNS record: *.$DOMAIN $ARROW $CADDY_IP"
 fi
