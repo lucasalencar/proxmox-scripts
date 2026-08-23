@@ -1,5 +1,54 @@
 #!/bin/bash
 
+# ANSI color codes (empty when not a TTY, so piped output stays clean)
+if [ -t 1 ]; then
+    COLOR_RESET="\033[0m"
+    COLOR_BOLD="\033[1m"
+    COLOR_RED="\033[31m"
+    COLOR_GREEN="\033[32m"
+    COLOR_YELLOW="\033[33m"
+    COLOR_CYAN="\033[36m"
+    COLOR_MAGENTA="\033[35m"
+else
+    COLOR_RESET=""
+    COLOR_BOLD=""
+    COLOR_RED=""
+    COLOR_GREEN=""
+    COLOR_YELLOW=""
+    COLOR_CYAN=""
+    COLOR_MAGENTA=""
+fi
+
+# Prints a highlighted step header (bold cyan)
+# Usage: log_step "Starting update of nextcloud"
+log_step() {
+    echo -e "${COLOR_BOLD}${COLOR_CYAN}🚀 $*${COLOR_RESET}"
+}
+
+# Prints an informational message (cyan)
+# Usage: log_info "Path: ./nextcloud"
+log_info() {
+    echo -e "${COLOR_CYAN}ℹ️  $*${COLOR_RESET}"
+}
+
+# Prints a success message (bold green)
+# Usage: log_success "Update completed"
+log_success() {
+    echo -e "${COLOR_BOLD}${COLOR_GREEN}✅ $*${COLOR_RESET}"
+}
+
+# Prints a warning message (bold yellow)
+# Usage: log_warning "Script not found"
+log_warning() {
+    echo -e "${COLOR_BOLD}${COLOR_YELLOW}⚠️  $*${COLOR_RESET}"
+}
+
+# Prints an error message (bold red, to stderr)
+# Usage: log_error "Update failed"
+log_error() {
+    echo -e "${COLOR_BOLD}${COLOR_RED}❌ $*${COLOR_RESET}" >&2
+}
+
 # Exits with error if not running as root
 require_root() {
     if [[ $EUID -ne 0 ]]; then

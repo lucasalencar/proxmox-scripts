@@ -11,16 +11,16 @@ TARGET_HOME=$(get_primary_user_home)
 
 DOTFILES_DIR="$TARGET_HOME/.dotfiles"
 
-echo "Updating dotfiles..."
+log_step "Updating dotfiles..."
 su -c "git -C '$DOTFILES_DIR' pull" "$TARGET_USER"
 
-echo "Updating TPM..."
+log_step "Updating TPM..."
 su -c "git -C '$TARGET_HOME/.tmux/plugins/tpm' pull" "$TARGET_USER"
 
-echo "Updating tmux plugins..."
+log_step "Updating tmux plugins..."
 su -c "'$TARGET_HOME/.tmux/plugins/tpm/scripts/update_plugin.sh'" "$TARGET_USER"
 
-echo "Reloading tmux config..."
+log_step "Reloading tmux config..."
 tmux source-file "$TARGET_HOME/.tmux.conf" 2>/dev/null || true
 
-echo "Update complete."
+log_success "Update complete."

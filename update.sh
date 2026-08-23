@@ -21,7 +21,7 @@ if [ $# -gt 0 ]; then
         if [ -f "./$pkg_clean/update.sh" ]; then
             UPDATE_SCRIPTS="$UPDATE_SCRIPTS ./$pkg_clean/update.sh"
         else
-            echo "Warning: No update script found for package '$pkg_clean' (./$pkg_clean/update.sh not found)."
+            log_warning "No update script found for package '$pkg_clean' (./$pkg_clean/update.sh not found)."
         fi
     done
 else
@@ -31,7 +31,7 @@ else
 fi
 
 if [ -z "$UPDATE_SCRIPTS" ]; then
-    echo "No update scripts to execute."
+    log_warning "No update scripts to execute."
     exit 0
 fi
 
@@ -40,17 +40,13 @@ for script in $UPDATE_SCRIPTS; do
     script_dir=$(dirname "$script_abs_path")
     script_name=$(basename "$script_dir")
 
-    echo "------------------------------------------"
-    echo "Executing update for: $script_name"
-    echo "Path: $script"
-    echo "------------------------------------------"
+    echo ""
+    log_step "Executing update for: $script_name"
+    log_info "Path: $script"
 
     # Execute the script in its own directory
-    (cd "$script_dir" && bash "./update.sh") || echo "Error updating $script_name. Continuing with others..."
-
-    echo ""
+    (cd "$script_dir" && bash "./update.sh") || log_error "Update failed for $script_name. Continuing with others..."
 done
 
-echo "------------------------------------------"
-echo "All update processes completed!"
-echo "------------------------------------------"
+echo ""
+log_success "All update processes completed!"

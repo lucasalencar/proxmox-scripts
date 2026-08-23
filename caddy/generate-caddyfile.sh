@@ -12,20 +12,20 @@ LOCAL_CADDYFILE="$SCRIPT_DIR/Caddyfile.local"
 CADDY_CONTAINER_NAME="caddy"
 DOMAIN="marx.home"
 
-echo "=== Caddyfile Generator for *.$DOMAIN ==="
+log_step "Caddyfile Generator for *.$DOMAIN"
 echo ""
 
 # --- Verify Caddy container exists ---
 CADDY_ID=$(get_container_id_by_name "$CADDY_CONTAINER_NAME")
 if [ -z "$CADDY_ID" ]; then
-    echo "Error: Caddy container not found. Run install.sh first."
+    log_error "Caddy container not found. Run install.sh first."
     exit 1
 fi
 
 pct start "$CADDY_ID" 2>/dev/null || true
 
 CADDY_IP=$(get_container_ip "$CADDY_ID")
-echo "Caddy container: $CADDY_ID (IP: ${CADDY_IP:-unknown})"
+log_info "Caddy container: $CADDY_ID (IP: ${CADDY_IP:-unknown})"
 echo ""
 
 # --- Load existing port mappings from Caddyfile.local ---
@@ -33,7 +33,7 @@ declare -A PORT_MAP
 declare -A TLS_MAP
 
 if [ -f "$LOCAL_CADDYFILE" ]; then
-    echo "Loading existing configuration from $LOCAL_CADDYFILE..."
+    log_info "Loading existing configuration from $LOCAL_CADDYFILE..."
     while IFS= read -r line; do
         if [[ $line =~ http://([^.]+)\.$DOMAIN[[:space:]]*\{ ]]; then
             current_name="${BASH_REMATCH[1]}"
@@ -50,7 +50,7 @@ if [ -f "$LOCAL_CADDYFILE" ]; then
     done < "$LOCAL_CADDYFILE"
 
     if [ ${#PORT_MAP[@]} -gt 0 ] || [ ${#TLS_MAP[@]} -gt 0 ]; then
-        echo "  Found ${#PORT_MAP[@]} saved port mapping(s) and ${#TLS_MAP[@]} TLS setting(s)"
+        log_info "  Found ${#PORT_MAP[@]} saved port mapping(s) and ${#TLS_MAP[@]} TLS setting(s)"
     fi
     echo ""
 fi
@@ -89,7 +89,7 @@ while IFS= read -r vmid; do
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
 
     if [ -n "${GUEST_IPS[$name]:-}" ]; then
-        echo "  Skipping VM $vmid ($name) — name already used by another guest"
+        log_warning "  Skipping VM $vmid ($name) — name already used by another guest"
         continue
     fi
 
@@ -112,14 +112,14 @@ done < <(qm list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -n)
 
 TOTAL=${#GUEST_NAMES[@]}
 if [ "$TOTAL" -eq 0 ]; then
-    echo "No guests found to configure."
+    log_warning "No guests found to configure."
     exit 0
 fi
 
-echo "Found $TOTAL guest(s) to configure:"
+log_info "Found $TOTAL guest(s) to configure:"
 for i in $(seq 0 $((TOTAL - 1))); do
     type_label="[${GUEST_TYPES[$i]}]"
-    echo "  $type_label ${GUEST_IDS[$i]}: ${GUEST_NAMES[$i]} (${GUEST_IPS[${GUEST_NAMES[$i]}]})"
+    log_info "  $type_label ${GUEST_IDS[$i]}: ${GUEST_NAMES[$i]} (${GUEST_IPS[${GUEST_NAMES[$i]}]})"
 done
 echo ""
 
@@ -132,7 +132,7 @@ for i in $(seq 0 $((TOTAL - 1))); do
 
     if [ -n "${PORT_MAP[$name]:-}" ]; then
         port="${PORT_MAP[$name]}"
-        echo "  $CHECK $name $ARROW saved port $port"
+        log_info "  $CHECK $name $ARROW saved port $port"
     else
         listening_ports=""
         if [ "$type" = "ct" ]; then
@@ -160,7 +160,7 @@ for i in $(seq 0 $((TOTAL - 1))); do
         fi
 
         if [ -n "$listening_ports" ]; then
-            echo "  Detected ports for $name: $(echo "$listening_ports" | tr '\n' ' ')"
+            log_info "  Detected ports for $name: $(echo "$listening_ports" | tr '\n' ' ')"
         fi
 
         read -p "  Port for $name.$DOMAIN ($ip) [default: $suggested]: " user_port
@@ -171,7 +171,7 @@ for i in $(seq 0 $((TOTAL - 1))); do
 
     # --- Determine TLS mode for each guest ---
     if [ -n "${TLS_MAP[$name]:-}" ]; then
-        echo "  $CHECK $name $ARROW saved TLS: $([ "${TLS_MAP[$name]}" = "https" ] && echo "HTTPS (tls internal)" || echo "HTTP")"
+        log_info "  $CHECK $name $ARROW saved TLS: $([ "${TLS_MAP[$name]}" = "https" ] && echo "HTTPS (tls internal)" || echo "HTTP")"
     else
         default_tls="http"
         [[ "$name" == nextcloud* ]] && default_tls="https"
@@ -186,7 +186,7 @@ for i in $(seq 0 $((TOTAL - 1))); do
 done
 
 echo ""
-echo "--- Writing $LOCAL_CADDYFILE ---"
+log_step "Writing $LOCAL_CADDYFILE"
 echo ""
 
 # --- Generate Caddyfile ---
@@ -210,10 +210,10 @@ echo ""
 cat "$LOCAL_CADDYFILE"
 
 # --- Push to Caddy container and reload ---
-echo "Pushing to Caddy container ($CADDY_ID)..."
+log_step "Pushing to Caddy container ($CADDY_ID)..."
 pct push "$CADDY_ID" "$LOCAL_CADDYFILE" /etc/caddy/Caddyfile
 
-echo "Reloading Caddy..."
+log_step "Reloading Caddy..."
 pct exec "$CADDY_ID" -- systemctl reload caddy
 
 # --- If any Nextcloud guest is configured, run trust-nextcloud.sh ---
@@ -221,15 +221,15 @@ for i in $(seq 0 $((TOTAL - 1))); do
     name="${GUEST_NAMES[$i]}"
     if [[ "$name" == nextcloud* ]]; then
         echo ""
-        echo "=== Configuring Nextcloud ($name) to trust Caddy... ==="
+        log_step "Configuring Nextcloud ($name) to trust Caddy..."
         "$SCRIPT_DIR/trust-nextcloud.sh" --container "${GUEST_IDS[$i]}" --domain "$DOMAIN"
     fi
 done
 
 echo ""
-echo "Done! Caddy reloaded with latest configuration."
+log_success "Caddy reloaded with latest configuration."
 echo ""
-echo "Next step: run ./container-annotate/annotate.sh to update container/VM descriptions with access links."
+log_info "Next step: run ./container-annotate/annotate.sh to update container/VM descriptions with access links."
 if [ -n "$CADDY_IP" ]; then
-    echo "If not already set, add a wildcard DNS record: *.$DOMAIN $ARROW $CADDY_IP"
+    log_info "If not already set, add a wildcard DNS record: *.$DOMAIN $ARROW $CADDY_IP"
 fi

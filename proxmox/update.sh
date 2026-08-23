@@ -8,18 +8,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/functions.sh"
 
-echo "=== Starting Proxmox VE update ==="
+log_step "Starting Proxmox VE update"
 
 require_root
 
-echo "Updating package list..."
+log_step "Updating package list..."
 apt-get update
 
-echo "Updating installed packages..."
+log_step "Updating installed packages..."
 apt-get dist-upgrade -y
 
-echo "Cleaning up unnecessary packages..."
+log_step "Cleaning up unnecessary packages..."
 apt-get autoremove -y
 apt-get autoclean
 
-echo "=== Update completed successfully! ==="
+log_success "Update completed successfully!"

@@ -116,7 +116,7 @@ annotate_guest() {
     ((UPDATED++))
 }
 
-echo "=== Annotating guest descriptions ==="
+log_step "Annotating guest descriptions"
 echo ""
 
 # Build name -> port map from Caddyfile
@@ -178,4 +178,4 @@ while IFS= read -r vmid; do
 done < <(qm list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -n)
 
 echo ""
-echo "Done! $UPDATED annotated, $SKIPPED already up-to-date."
+log_success "Done! $UPDATED annotated, $SKIPPED already up-to-date."

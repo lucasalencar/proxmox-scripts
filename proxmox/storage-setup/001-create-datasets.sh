@@ -8,7 +8,7 @@ source "$(dirname "$0")/../common/functions.sh"
 # Load primary user
 PRIMARY_USER=$(get_primary_user) || exit 1
 
-echo "Creating main ZFS datasets (tank/data, media, memorias, downloads)..."
+log_step "Creating main ZFS datasets (tank/data, media, memorias, downloads)..."
 zfs create tank/data
 zfs create tank/data/media
 zfs create tank/data/memorias
@@ -21,7 +21,7 @@ zfs mount -a
 # - Current recordsize (disk page size): `zfs get recordsize tank/data/memorias`
 # - Current atime (write last access timestamp): zfs get atime /tank/data/memorias
 
-echo "Setting up ZFS optimization properties..."
+log_step "Setting up ZFS optimization properties..."
 zfs set recordsize=1M tank/data/media
 zfs set atime=off tank/data/media
 zfs set recordsize=1M tank/data/memorias
@@ -30,14 +30,14 @@ zfs set atime=off tank/data/memorias
 # Downloads: mixed file sizes, keep default recordsize
 zfs set atime=off tank/data/downloads
 
-echo "Creating media organization folders..."
+log_step "Creating media organization folders..."
 mkdir -p /tank/data/media/Movies /tank/data/media/Series /tank/data/media/Music
 
-echo "Configuring ZFS ACLs..."
+log_step "Configuring ZFS ACLs..."
 
 # 1. ROOT (/tank/data): Grant NON-RECURSIVE access so containers can traverse to subfolders.
 # We also set Default ACLs so any NEW folder created here inherits these base permissions.
-echo "Configuring root traverse permissions and defaults on /tank/data..."
+log_step "Configuring root traverse permissions and defaults on /tank/data..."
 zfs set acltype=posixacl tank/data
 zfs set xattr=sa tank/data
 
@@ -55,15 +55,15 @@ setfacl -d -m "$root_acl" /tank/data # Set as default for inheritance
 
 # 2. SHARED DATA: Apply RECURSIVE access for Media and Memorias
 
-echo "Applying full recursive ACLs to shared datasets..."
+log_step "Applying full recursive ACLs to shared datasets..."
 setup_dataset_acls tank/data/media /tank/data/media 1000 100000
 setup_dataset_acls tank/data/memorias /tank/data/memorias 1000 100000
 setup_dataset_acls tank/data/downloads /tank/data/downloads 1000 100000
 
 # 3. PRIVATE DATA: Create/Secure primary user dataset
 # This script applies strict ACLs/Permissions only for the user.
-echo "Creating/Securing primary user dataset: $PRIMARY_USER..."
+log_step "Creating/Securing primary user dataset: $PRIMARY_USER..."
 "$(dirname "$0")/create-user-dataset.sh" "$PRIMARY_USER"
 
-echo "Storage setup complete. Current datasets:"
+log_success "Storage setup complete. Current datasets:"
 zfs list -o name,mountpoint,referenced

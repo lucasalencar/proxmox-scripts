@@ -8,19 +8,19 @@ DOMAIN_SUFFIX="marx.home"
 
 adguard_id=$(get_container_id_by_name "adguard")
 if [ -z "$adguard_id" ]; then
-  echo "Error: AdGuard container not found."
+  log_error "AdGuard container not found."
   exit 1
 fi
 ADGUARD_IP=$(get_container_ip "$adguard_id")
-echo "AdGuard Home container IP: $ADGUARD_IP"
+log_info "AdGuard Home container IP: $ADGUARD_IP"
 
 caddy_id=$(get_container_id_by_name "caddy")
 if [ -z "$caddy_id" ]; then
-  echo "Error: Caddy container not found. Install Caddy first."
+  log_error "Caddy container not found. Install Caddy first."
   exit 1
 fi
 CADDY_IP=$(get_container_ip "$caddy_id")
-echo "Caddy container IP: $CADDY_IP"
+log_info "Caddy container IP: $CADDY_IP"
 
 login() {
   local username password
@@ -33,7 +33,7 @@ login() {
     -d "{\"name\": \"$username\", \"password\": \"$password\"}" \
     -c /tmp/adguard_cookies.txt)
   if [ "$login_http" != "200" ]; then
-    echo "Error: Login failed (HTTP $login_http). Check username/password."
+    log_error "Login failed (HTTP $login_http). Check username/password."
     exit 1
   fi
 }

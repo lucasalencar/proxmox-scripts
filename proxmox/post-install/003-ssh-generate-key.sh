@@ -13,7 +13,7 @@ CONFIG_FILE="$HOME/.proxmox_config"
 if [[ -f "$CONFIG_FILE" ]]; then
   # Source config file (variables become available)
   source "$CONFIG_FILE"
-  echo "Loaded configuration from $CONFIG_FILE"
+  log_info "Loaded configuration from $CONFIG_FILE"
 fi
 
 # Path where the SSH key will be stored (configurable via PROXMOX_SSH_KEY_PATH in config)
@@ -26,10 +26,10 @@ ssh_host="${ssh_user}@${server_ip}"
 
 # Validate that server IP was provided (either via config or argument)
 if [[ -z "$server_ip" ]]; then
-  echo "Error: Proxmox server IP not specified."
-  echo "Either:"
-  echo "  1. Set PROXMOX_SERVER_IP in $CONFIG_FILE, OR"
-  echo "  2. Provide IP as command-line argument: $0 <server_ip>"
+  log_error "Proxmox server IP not specified."
+  log_error "Either:"
+  log_error "  1. Set PROXMOX_SERVER_IP in $CONFIG_FILE, OR"
+  log_error "  2. Provide IP as command-line argument: $0 <server_ip>"
   exit 1
 fi
 
@@ -50,18 +50,18 @@ Host proxmox
     IdentityFile KEY_PATH
 EOF
   sed -i '' "s|SERVER_IP|$server_ip|g; s|KEY_PATH|$KEY_PATH|g" ~/.ssh/config
-  echo "SSH config updated at ~/.ssh/config"
+  log_success "SSH config updated at ~/.ssh/config"
 fi
 
 # Display instructions for securing the server
 echo
 echo "=============================================="
-echo "  IMPORTANT: After connecting to the server,  "
-echo "  disable root SSH login with the following: "
+log_warning "IMPORTANT: After connecting to the server,"
+log_warning "disable root SSH login with the following:"
 echo "=============================================="
 echo
-echo "  sudo sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config"
-echo "  sudo systemctl restart sshd"
+log_info "  sudo sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config"
+log_info "  sudo systemctl restart sshd"
 echo
 echo "=============================================="
 echo

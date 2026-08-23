@@ -14,4 +14,4 @@ sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet i
 # Update GRUB to apply changes
 update-grub
 
-echo "IOMMU enabled. Reboot required for changes to take effect."
+log_success "IOMMU enabled. Reboot required for changes to take effect."

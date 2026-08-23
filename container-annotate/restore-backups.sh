@@ -7,7 +7,7 @@ require_root
 
 RESTORED=0
 
-echo "=== Restoring config backups ==="
+log_step "Restoring config backups"
 echo ""
 
 backups=()
@@ -19,11 +19,11 @@ for dir in "/etc/pve/lxc" "/etc/pve/qemu-server"; do
 done
 
 if [ ${#backups[@]} -eq 0 ]; then
-    echo "No backup files found (*.conf.bak in /etc/pve/lxc or /etc/pve/qemu-server)."
+    log_info "No backup files found (*.conf.bak in /etc/pve/lxc or /etc/pve/qemu-server)."
     exit 0
 fi
 
-echo "Found ${#backups[@]} backup(s):"
+log_info "Found ${#backups[@]} backup(s):"
 for bak in "${backups[@]}"; do
     orig="${bak%.bak}"
     echo "  $orig  <-  $(basename "$bak")"
@@ -46,5 +46,5 @@ for bak in "${backups[@]}"; do
 done
 
 echo ""
-echo "Done! $RESTORED config file(s) restored."
-echo "Note: The .bak files were kept in place."
+log_success "Done! $RESTORED config file(s) restored."
+log_info "Note: The .bak files were kept in place."

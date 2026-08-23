@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --vmid)    HA_VMID="$2"; shift 2 ;;
         --caddy-ip) CADDY_IP="$2"; shift 2 ;;
-        *) echo "Usage: $0 [--vmid VMID] [--caddy-ip IP]"; exit 1 ;;
+        *) log_error "Usage: $0 [--vmid VMID] [--caddy-ip IP]"; exit 1 ;;
     esac
 done
 
@@ -29,10 +29,10 @@ if [ -z "$HA_VMID" ]; then
     HA_VMID=$(get_vm_id_by_name "haos")
 fi
 if [ -z "$HA_VMID" ] || ! qm status "$HA_VMID" &>/dev/null; then
-    echo "Error: HA OS VM not found. Use --vmid or create the VM first."
+    log_error "HA OS VM not found. Use --vmid or create the VM first."
     exit 1
 fi
-echo "HA OS VM: $HA_VMID"
+log_info "HA OS VM: $HA_VMID"
 
 # --- Discover Caddy IP ---
 if [ -z "$CADDY_IP" ]; then
@@ -42,26 +42,26 @@ if [ -z "$CADDY_IP" ]; then
     fi
 fi
 if [ -z "$CADDY_IP" ]; then
-    echo "Error: Could not determine Caddy IP. Use --caddy-ip or ensure Caddy container exists."
+    log_error "Could not determine Caddy IP. Use --caddy-ip or ensure Caddy container exists."
     exit 1
 fi
-echo "Caddy IP: $CADDY_IP"
+log_info "Caddy IP: $CADDY_IP"
 
 # --- Dependencies ---
 if ! command -v guestfish &>/dev/null; then
-    echo "Installing libguestfs-tools..."
+    log_step "Installing libguestfs-tools..."
     apt-get install -y -qq libguestfs-tools 2>/dev/null || {
         apt-get update -qq && apt-get install -y -qq libguestfs-tools
     }
 fi
 
 if ! python3 -c "import yaml" &>/dev/null; then
-    echo "Installing python3-yaml..."
+    log_step "Installing python3-yaml..."
     apt-get install -y -qq python3-yaml
 fi
 
 # --- Stop VM gracefully ---
-echo "Shutting down VM $HA_VMID..."
+log_step "Shutting down VM $HA_VMID..."
 if qm shutdown "$HA_VMID" --timeout 60 2>/dev/null; then
     for i in $(seq 1 30); do
         qm status "$HA_VMID" 2>/dev/null | grep -q "stopped" && break
@@ -69,7 +69,7 @@ if qm shutdown "$HA_VMID" --timeout 60 2>/dev/null; then
     done
 fi
 if qm status "$HA_VMID" 2>/dev/null | grep -q "running"; then
-    echo "Force stopping VM $HA_VMID..."
+    log_step "Force stopping VM $HA_VMID..."
     qm stop "$HA_VMID"
 fi
 sleep 3
@@ -78,15 +78,15 @@ sleep 3
 TEMP_CONFIG="/tmp/ha-config-${HA_VMID}.yaml"
 DISK_DEVICE="/dev/pve/vm-${HA_VMID}-disk-0"
 
-echo "Locating hassos-data partition..."
+log_step "Locating hassos-data partition..."
 DATA_DEVICE=$(guestfish --ro -a "$DISK_DEVICE" run : findfs-label hassos-data 2>/dev/null)
 if [ -z "$DATA_DEVICE" ]; then
-    echo "Error: Could not find hassos-data partition on disk."
+    log_error "Could not find hassos-data partition on disk."
     exit 1
 fi
-echo "Data partition: $DATA_DEVICE"
+log_info "Data partition: $DATA_DEVICE"
 
-echo "Reading current configuration..."
+log_step "Reading current configuration..."
 guestfish --rw -a "$DISK_DEVICE" <<GUESTFISH 2>/dev/null
 run
 mount $DATA_DEVICE /
@@ -94,17 +94,17 @@ download /supervisor/homeassistant/configuration.yaml $TEMP_CONFIG
 GUESTFISH
 READ_OK=$?
 if [ $READ_OK -ne 0 ] || [ ! -s "$TEMP_CONFIG" ]; then
-    echo "No existing configuration.yaml found, starting fresh."
+    log_info "No existing configuration.yaml found, starting fresh."
     echo "{}" > "$TEMP_CONFIG"
 else
     BACKUP_DIR="/var/backups/haos-config"
     mkdir -p "$BACKUP_DIR"
     BACKUP_FILE="$BACKUP_DIR/configuration.yaml.$(date +%Y%m%d-%H%M%S)"
     cp "$TEMP_CONFIG" "$BACKUP_FILE"
-    echo "Backup saved: $BACKUP_FILE"
+    log_info "Backup saved: $BACKUP_FILE"
 fi
 
-echo "Merging proxy configuration..."
+log_step "Merging proxy configuration..."
 python3 -c "
 import yaml
 
@@ -146,7 +146,7 @@ with open('$TEMP_CONFIG', 'w') as f:
     yaml.dump(config, f, default_flow_style=False)
 "
 
-echo "Writing configuration back..."
+log_step "Writing configuration back..."
 guestfish --rw -a "$DISK_DEVICE" <<GUESTFISH
 run
 mount $DATA_DEVICE /
@@ -156,8 +156,8 @@ GUESTFISH
 rm -f "$TEMP_CONFIG"
 
 # --- Start VM ---
-echo "Starting VM $HA_VMID..."
+log_step "Starting VM $HA_VMID..."
 qm start "$HA_VMID"
 
 echo ""
-echo "Done! HA OS VM $HA_VMID configured to trust Caddy ($CADDY_IP)"
+log_success "HA OS VM $HA_VMID configured to trust Caddy ($CADDY_IP)"

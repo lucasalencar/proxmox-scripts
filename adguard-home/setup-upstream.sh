@@ -10,7 +10,7 @@ UPSTREAM_DNS=(
 
 container_id=$(get_container_id_by_name "adguard")
 if [ -z "$container_id" ]; then
-  echo "Error: AdGuard container not found."
+  log_error "AdGuard container not found."
   exit 1
 fi
 ADGUARD_IP=$(get_container_ip "$container_id")
@@ -26,7 +26,7 @@ login_http=$(curl -s -o /dev/null -w "%{http_code}" \
   -c /tmp/adguard_cookies.txt)
 
 if [ "$login_http" != "200" ]; then
-  echo "Error: Login failed (HTTP $login_http). Check username/password."
+  log_error "Login failed (HTTP $login_http). Check username/password."
   exit 1
 fi
 
@@ -41,8 +41,8 @@ http_code=$(curl -s -o /dev/null -w "%{http_code}" \
   -d "$payload")
 
 if [ "$http_code" = "200" ]; then
-  echo "Upstream DNS configured:"
+  log_success "Upstream DNS configured:"
   printf '  %s\n' "${UPSTREAM_DNS[@]}"
 else
-  echo "Error: HTTP $http_code"
+  log_error "HTTP $http_code"
 fi

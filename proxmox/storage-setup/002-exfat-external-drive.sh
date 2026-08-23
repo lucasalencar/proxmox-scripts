@@ -1,5 +1,5 @@
 #!/bin/bash
 
 
-echo "Installing exfat support"
+log_step "Installing exfat support"
 apt install exfatprogs -y

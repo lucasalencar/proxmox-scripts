@@ -6,12 +6,12 @@ source "$SCRIPT_DIR/../common/functions.sh"
 
 require_root
 
-echo "Starting Nextcloud installation/configuration via LXC container..."
+log_step "Starting Nextcloud installation/configuration via LXC container..."
 
 NEXTCLOUD_INSTALL_CMD='bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/nextcloudpi.sh)"'
 container_id=$(ensure_container_installed "nextcloud" "$NEXTCLOUD_INSTALL_CMD") || exit 1
 
-echo "Waiting for container to finish first-boot setup..."
+log_step "Waiting for container to finish first-boot setup..."
 for i in $(seq 1 30); do
     if pct exec "$container_id" -- systemctl is-system-running --wait 2>/dev/null | grep -qE 'running|degraded'; then
         break
@@ -19,29 +19,29 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-echo "Disabling ncp-activation Apache site (first-run wizard)..."
+log_step "Disabling ncp-activation Apache site (first-run wizard)..."
 pct exec "$container_id" -- a2dissite ncp-activation 2>/dev/null
 pct exec "$container_id" -- systemctl reload apache2 2>/dev/null
 
 ADMIN_USER="ncp"
 ADMIN_PASS=$(tr -dc 'A-Za-z0-9!@#$%^&*()_+-=' < /dev/urandom | head -c 20)
-echo "Setting admin user '$ADMIN_USER' password..."
+log_step "Setting admin user '$ADMIN_USER' password..."
 pct exec "$container_id" -- bash -c \
     "OC_PASS='$ADMIN_PASS' sudo -E -u www-data php /var/www/nextcloud/occ user:resetpassword --password-from-env '$ADMIN_USER'" 2>/dev/null
 
-echo "Moving Nextcloud data directory to ZFS dataset on HDD..."
+log_step "Moving Nextcloud data directory to ZFS dataset on HDD..."
 "$SCRIPT_DIR/setup-storage.sh"
 
 echo ""
-echo "Installation complete. Nextcloud is running in container $container_id."
+log_success "Installation complete. Nextcloud is running in container $container_id."
 echo ""
-echo "──────────────────────────────────────────────────────"
-echo "  Admin credentials:"
-echo "    User:     $ADMIN_USER"
-echo "    Password: $ADMIN_PASS"
-echo "──────────────────────────────────────────────────────"
+log_success "──────────────────────────────────────────────────────"
+log_success "  Admin credentials:"
+log_success "    User:     $ADMIN_USER"
+log_success "    Password: $ADMIN_PASS"
+log_success "──────────────────────────────────────────────────────"
 echo ""
-echo "Next steps:"
-echo "  1. Run ./caddy/generate-caddyfile.sh to configure reverse proxy"
-echo "  2. Run ./caddy/trust-nextcloud.sh to trust Caddy integration"
-echo "  3. Run ./nextcloud/sync-users.sh to create server users in Nextcloud"
+log_info "Next steps:"
+log_info "  1. Run ./caddy/generate-caddyfile.sh to configure reverse proxy"
+log_info "  2. Run ./caddy/trust-nextcloud.sh to trust Caddy integration"
+log_info "  3. Run ./nextcloud/sync-users.sh to create server users in Nextcloud"
