@@ -3,3 +3,6 @@ MACHINE.md
 
 # Generated Caddyfile with container mappings (regenerated on each run)
 caddy/Caddyfile.local
+
+# Agent Review Dir
+.reviews
