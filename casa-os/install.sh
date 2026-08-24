@@ -57,13 +57,13 @@ add_dataset_acl "/tank/data/media" "$host_docker_uid"
 
 # 5. Perform bind mounts
 mounts=(
-    "/tank/data/memorias,/DATA/Gallery"
-    "/tank/data/media,/DATA/Media"
-    "/tank/data/downloads,/DATA/Downloads"
+    /tank/data/memorias /DATA/Gallery
+    /tank/data/media /DATA/Media
+    /tank/data/downloads /DATA/Downloads
 )
 if [ -n "$DOCUMENTS_SOURCE" ]; then
     add_dataset_acl "$DOCUMENTS_SOURCE" "$host_casaos_uid"
-    mounts+=("$DOCUMENTS_SOURCE,/DATA/Documents")
+    mounts+=("$DOCUMENTS_SOURCE" /DATA/Documents)
 fi
 
 apply_mounts "$container_id" "${mounts[@]}"

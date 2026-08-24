@@ -31,7 +31,7 @@ add_dataset_acl "/tank/data/memorias" "$host_jellyfin_uid"
 
 # 4. Perform bind mounts (stops, sets, restarts, and waits for ready)
 apply_mounts "$container_id" \
-    "/tank/data/media,/DATA/Media" \
-    "/tank/data/memorias,/DATA/Gallery"
+    /tank/data/media /DATA/Media \
+    /tank/data/memorias /DATA/Gallery
 
 log_success "Installation and ACL setup completed for Jellyfin (ID: $container_id)."

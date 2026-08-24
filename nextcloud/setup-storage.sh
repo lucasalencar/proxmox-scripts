@@ -77,7 +77,7 @@ else
     done
 
     log_step "Setting up bind mount (mp${mp_idx}): $MOUNT_PATH -> $data_dir"
-    apply_mounts "$container_id" "$MOUNT_PATH,mp=$data_dir" "$mp_idx"
+    apply_mounts "$container_id" "$MOUNT_PATH" "$data_dir" "$mp_idx"
 fi
 
 log_step "Ensuring temporary directory exists..."

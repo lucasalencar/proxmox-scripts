@@ -233,8 +233,9 @@ get_container_ip() {
 
 # Stops a container, applies all bind mounts, and restarts it.
 # The container is guaranteed to be ready when this function returns.
-# Usage: apply_mounts <container_id> <host_path,container_path> [host_path,container_path] ...
+# Usage: apply_mounts <container_id> <host_path> <container_path> [host_path container_path] ...
 # Optionally pass a starting mp_index as the last argument (default: 1).
+# Example: apply_mounts 106 /tank/data /data /tank/data/media /DATA/Media
 apply_mounts() {
     local container_id="$1"
     shift
@@ -246,12 +247,14 @@ apply_mounts() {
         shift
     fi
 
-    local mounts=("$@")
-
     log_step "Stopping container $container_id..."
     pct stop "$container_id" 2>/dev/null
 
-    for mount in "${mounts[@]}"; do
+    while [ $# -ge 2 ]; do
+        local host_path="$1"
+        local container_path="$2"
+        shift 2
+
         # Check if this index is already in use
         local existing
         existing=$(pct config "$container_id" 2>/dev/null | grep -oP "^mp${mp_index}:\s*\K[^,]+")
@@ -266,8 +269,8 @@ apply_mounts() {
             fi
         fi
 
-        log_info "Setting mp${mp_index}: $mount"
-        pct set "$container_id" "-mp${mp_index}" "$mount"
+        log_info "Setting mp${mp_index}: ${host_path} -> ${container_path}"
+        pct set "$container_id" "-mp${mp_index}" "${host_path},mp=${container_path}"
         mp_index=$((mp_index + 1))
     done
 

@@ -12,6 +12,8 @@
 
 - **`pct set -mpX` error "invalid format - missing key in comma-separated list property":** This error occurs when the `mp=...` value passed to `pct set` is malformed (e.g., contains newlines, spaces, or is empty). The format must be `host_path,mp=container_path` with both paths being single-line clean strings. Always validate/sanitize variables before using them in `pct set` arguments. A broken variable upstream (like a mis-extracted config value) silently produces this error downstream.
 
+- **`pct set` mount point syntax:** The correct format is `pct set <vmid> -mp<N> <host_path>,mp=<container_path>` — note the `mp=` prefix before the container path. Without it, `pct set` fails silently or produces malformed config. The `apply_mounts` helper builds this format internally from separate `host_path` and `container_path` arguments.
+
 - **Container readiness helpers (`apply_mounts`, `get_container_ip`):** `apply_mounts` stops the container, applies all bind mounts, restarts it, and waits until it's ready — when it returns, the container is fully operational. `get_container_ip` internally calls `wait_container_ready` before fetching the IP, so callers never need to wait separately. If a script needs to run `pct exec` after a restart, use `apply_mounts` first (it guarantees readiness on return).
 
 - **`pct set` requires the container to be stopped:** Mount point changes via `pct set -mpX` only take effect after a container restart. Scripts that call `pct set` on a running container (without stop/restart) will have the mounts silently ignored until the next reboot. Always use `apply_mounts` which handles stop → set → start → wait.

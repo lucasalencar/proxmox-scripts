@@ -19,7 +19,7 @@ mkdir -p /tank/data/downloads/{series,movies,music}
 
 # 3. Apply bind mount (stops, sets, restarts, and waits for ready)
 log_step "Mounting /tank/data -> /data"
-apply_mounts "$container_id" "/tank/data,/data"
+apply_mounts "$container_id" /tank/data /data
 
 # 4. Discover internal UID of qBittorrent user
 internal_uid=$(pct exec "$container_id" -- id -u qbittorrent 2>/dev/null)
