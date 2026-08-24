@@ -70,19 +70,14 @@ else
     log_step "Stopping Apache inside container..."
     pct exec "$container_id" -- systemctl stop apache2 2>/dev/null || true
 
-    log_step "Stopping container..."
-    pct stop "$container_id"
-
-    for mp_idx in $(seq 1 10); do
-        if ! pct config "$container_id" | grep -qP "^mp${mp_idx}:"; then
-            break
-        fi
+    # Find next available mount index
+    mp_idx=1
+    while pct config "$container_id" 2>/dev/null | grep -qP "^mp${mp_idx}:"; do
+        mp_idx=$((mp_idx + 1))
     done
-    log_step "Setting up bind mount (mp${mp_idx}): $MOUNT_PATH -> $data_dir"
-    pct set "$container_id" "-mp${mp_idx}" "$MOUNT_PATH,mp=$data_dir" || { log_error "Bind mount failed."; exit 1; }
 
-    log_step "Starting container..."
-    pct start "$container_id"
+    log_step "Setting up bind mount (mp${mp_idx}): $MOUNT_PATH -> $data_dir"
+    apply_mounts "$container_id" "$MOUNT_PATH,mp=$data_dir" "$mp_idx"
 fi
 
 log_step "Ensuring temporary directory exists..."

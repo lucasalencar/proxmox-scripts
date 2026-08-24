@@ -56,24 +56,17 @@ add_dataset_acl "/tank/data/downloads" "$host_docker_uid"
 add_dataset_acl "/tank/data/media" "$host_docker_uid"
 
 # 5. Perform bind mounts
-log_step "Setting up mount: /tank/data/memorias -> /DATA/Gallery (mp1)"
-pct set "$container_id" -mp1 /tank/data/memorias,mp=/DATA/Gallery
-
-log_step "Setting up mount: /tank/data/media -> /DATA/Media (mp2)"
-pct set "$container_id" -mp2 /tank/data/media,mp=/DATA/Media
-
-log_step "Setting up mount: /tank/data/downloads -> /DATA/Downloads (mp3)"
-pct set "$container_id" -mp3 /tank/data/downloads,mp=/DATA/Downloads
-
+mounts=(
+    "/tank/data/memorias,/DATA/Gallery"
+    "/tank/data/media,/DATA/Media"
+    "/tank/data/downloads,/DATA/Downloads"
+)
 if [ -n "$DOCUMENTS_SOURCE" ]; then
-    log_step "Granting CasaOS access to $DOCUMENTS_SOURCE..."
     add_dataset_acl "$DOCUMENTS_SOURCE" "$host_casaos_uid"
-
-    log_step "Setting up mount: $DOCUMENTS_SOURCE -> /DATA/Documents (mp4)"
-    pct set "$container_id" -mp4 "$DOCUMENTS_SOURCE,mp=/DATA/Documents"
-else
-    log_info "Skipping /DATA/Documents mount (use --documents to enable)."
+    mounts+=("$DOCUMENTS_SOURCE,/DATA/Documents")
 fi
+
+apply_mounts "$container_id" "${mounts[@]}"
 
 echo ""
 log_success "Installation and Bind Mounts completed for CasaOS (ID: $container_id)."

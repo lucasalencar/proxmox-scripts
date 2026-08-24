@@ -17,7 +17,11 @@ log_info "Container ID: $container_id"
 log_step "Ensuring download category folders exist..."
 mkdir -p /tank/data/downloads/{series,movies,music}
 
-# 3. Discover internal UID of qBittorrent user
+# 3. Apply bind mount (stops, sets, restarts, and waits for ready)
+log_step "Mounting /tank/data -> /data"
+apply_mounts "$container_id" "/tank/data,/data"
+
+# 4. Discover internal UID of qBittorrent user
 internal_uid=$(pct exec "$container_id" -- id -u qbittorrent 2>/dev/null)
 if [ -z "$internal_uid" ]; then
     log_warning "User 'qbittorrent' not found, falling back to root"
@@ -27,17 +31,10 @@ host_uid=$((internal_uid + 100000))
 
 log_info "Internal UID: $internal_uid -> Host UID: $host_uid"
 
-# 4. Apply ACLs on downloads and media datasets
+# 5. Apply ACLs on downloads and media datasets
 log_step "Granting UID $host_uid access to downloads and media..."
 add_dataset_acl "/tank/data/downloads" "$host_uid"
 add_dataset_acl "/tank/data/media" "$host_uid"
-
-# 5. Mount /tank/data as /data (single mount for hardlink support)
-log_step "Mounting /tank/data -> /data (mp1)"
-pct stop "$container_id" 2>/dev/null
-pct set "$container_id" -mp1 /tank/data,mp=/data
-pct start "$container_id"
-wait_container_ready "$container_id" || log_warning "Container may not be fully ready"
 
 # 6. Get container IP
 container_ip=$(get_container_ip "$container_id")

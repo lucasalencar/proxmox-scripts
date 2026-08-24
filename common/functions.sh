@@ -215,10 +215,13 @@ get_vm_ip() {
 }
 
 # Returns the primary IP of a container by its ID.
+# Waits for the container to be ready before fetching the IP.
 # Usage: container_ip=$(get_container_ip <container_id>)
 get_container_ip() {
     local container_id="$1"
     local ip
+
+    wait_container_ready "$container_id" || return 1
 
     ip=$(pct exec "$container_id" -- hostname -I 2>/dev/null | awk '{print $1}')
     if [ -z "$ip" ]; then
@@ -226,6 +229,51 @@ get_container_ip() {
     fi
 
     echo "$ip"
+}
+
+# Stops a container, applies all bind mounts, and restarts it.
+# The container is guaranteed to be ready when this function returns.
+# Usage: apply_mounts <container_id> <host_path,container_path> [host_path,container_path] ...
+# Optionally pass a starting mp_index as the last argument (default: 1).
+apply_mounts() {
+    local container_id="$1"
+    shift
+
+    # Check if last argument is a numeric mp_index
+    local mp_index=1
+    if [[ "${!#}" =~ ^[0-9]+$ ]]; then
+        mp_index="${!#}"
+        shift
+    fi
+
+    local mounts=("$@")
+
+    log_step "Stopping container $container_id..."
+    pct stop "$container_id" 2>/dev/null
+
+    for mount in "${mounts[@]}"; do
+        # Check if this index is already in use
+        local existing
+        existing=$(pct config "$container_id" 2>/dev/null | grep -oP "^mp${mp_index}:\s*\K[^,]+")
+        if [ -n "$existing" ]; then
+            log_warning "mp${mp_index} already in use ($existing)"
+            read -r -p "Overwrite mp${mp_index}? (y/N): " confirm
+            if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                log_error "Mount aborted by user — skipping apply_mounts"
+                pct start "$container_id"
+                wait_container_ready "$container_id"
+                return 1
+            fi
+        fi
+
+        log_info "Setting mp${mp_index}: $mount"
+        pct set "$container_id" "-mp${mp_index}" "$mount"
+        mp_index=$((mp_index + 1))
+    done
+
+    log_step "Starting container $container_id..."
+    pct start "$container_id"
+    wait_container_ready "$container_id"
 }
 
 # Returns the container ID by its name (partial match, case-insensitive)
