@@ -13,18 +13,9 @@ container_id=$(ensure_container_installed "caddy" "$CADDY_INSTALL_CMD") || exit 
 log_info "Identified Container ID: $container_id"
 
 pct start "$container_id"
+wait_container_ready "$container_id" || { log_error "Container not ready"; exit 1; }
 
-log_step "Waiting for container IP..."
-for i in $(seq 1 15); do
-  CADDY_IP=$(get_container_ip "$container_id")
-  [ -n "$CADDY_IP" ] && break
-  sleep 2
-done
-
-if [ -z "$CADDY_IP" ]; then
-  log_error "Could not get Caddy container IP after 30 seconds."
-  exit 1
-fi
+CADDY_IP=$(get_container_ip "$container_id")
 log_info "Caddy container IP: $CADDY_IP"
 
 log_success "Installation completed for Caddy (ID: $container_id, IP: $CADDY_IP)."

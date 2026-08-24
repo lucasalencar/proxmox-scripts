@@ -171,6 +171,27 @@ ensure_container_installed() {
     echo "$container_id"
 }
 
+# Waits until a container responds to pct exec commands.
+# Usage: wait_container_ready <container_id> [max_attempts] [sleep_seconds]
+# Returns 0 if ready, 1 if timed out.
+wait_container_ready() {
+    local container_id="$1"
+    local max_attempts="${2:-15}"
+    local sleep_seconds="${3:-2}"
+    local attempt=1
+
+    while [ "$attempt" -le "$max_attempts" ]; do
+        if pct exec "$container_id" -- true 2>/dev/null; then
+            return 0
+        fi
+        sleep "$sleep_seconds"
+        attempt=$((attempt + 1))
+    done
+
+    log_error "Container $container_id not responsive after $((max_attempts * sleep_seconds))s"
+    return 1
+}
+
 # Returns the VM ID by its name (partial match, case-insensitive)
 # Usage: get_vm_id_by_name "name"
 get_vm_id_by_name() {
