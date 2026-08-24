@@ -240,15 +240,21 @@ apply_mounts() {
     local container_id="$1"
     shift
 
-    # Check if last argument is a numeric mp_index
+    # Check if last argument is a numeric mp_index (only when an extra arg
+    # trails the host/container pairs, i.e. odd total arg count).
     local mp_index=1
-    if [[ "${!#}" =~ ^[0-9]+$ ]]; then
+    if [ $(( $# % 2 )) -ne 0 ] && [[ "${!#}" =~ ^[0-9]+$ ]]; then
         mp_index="${!#}"
         shift
     fi
 
     log_step "Stopping container $container_id..."
     pct stop "$container_id" 2>/dev/null
+
+    # Warn if an odd number of path arguments were passed
+    if [ $(( $# % 2 )) -ne 0 ]; then
+        log_warning "apply_mounts received an odd number of path arguments; the last one will be ignored."
+    fi
 
     while [ $# -ge 2 ]; do
         local host_path="$1"
@@ -270,7 +276,12 @@ apply_mounts() {
         fi
 
         log_info "Setting mp${mp_index}: ${host_path} -> ${container_path}"
-        pct set "$container_id" "-mp${mp_index}" "${host_path},mp=${container_path}"
+        if ! pct set "$container_id" "-mp${mp_index}" "${host_path},mp=${container_path}"; then
+            log_error "Failed to set mp${mp_index} (${host_path} -> ${container_path})"
+            pct start "$container_id"
+            wait_container_ready "$container_id"
+            return 1
+        fi
         mp_index=$((mp_index + 1))
     done
 
