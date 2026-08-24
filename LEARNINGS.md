@@ -12,6 +12,10 @@
 
 - **`pct set -mpX` error "invalid format - missing key in comma-separated list property":** This error occurs when the `mp=...` value passed to `pct set` is malformed (e.g., contains newlines, spaces, or is empty). The format must be `host_path,mp=container_path` with both paths being single-line clean strings. Always validate/sanitize variables before using them in `pct set` arguments. A broken variable upstream (like a mis-extracted config value) silently produces this error downstream.
 
+- **Container readiness helpers (`apply_mounts`, `get_container_ip`):** `apply_mounts` stops the container, applies all bind mounts, restarts it, and waits until it's ready — when it returns, the container is fully operational. `get_container_ip` internally calls `wait_container_ready` before fetching the IP, so callers never need to wait separately. If a script needs to run `pct exec` after a restart, use `apply_mounts` first (it guarantees readiness on return).
+
+- **`pct set` requires the container to be stopped:** Mount point changes via `pct set -mpX` only take effect after a container restart. Scripts that call `pct set` on a running container (without stop/restart) will have the mounts silently ignored until the next reboot. Always use `apply_mounts` which handles stop → set → start → wait.
+
 - **Hardlinks require a single mount point in LXC containers:** When multiple ZFS datasets (e.g., `tank/data/downloads` and `tank/data/media`) need hardlink support inside a container, mount the common parent (`/tank/data`) as a single mount point (`-mp1 /tank/data,mp=/data`). Mounting each dataset separately makes the kernel treat them as distinct filesystems, causing `link()` to fail. The container apps must see both source and destination paths under one unified `/data` tree.
 
 - **Nextcloud storage migration — avoid data loss and duplicate mounts:**
