@@ -34,7 +34,44 @@ log_info "Host UID: $host_uid"
 log_step "Granting UID $host_uid access to mediaserver..."
 add_dataset_acl "/tank/data/mediaserver" "$host_uid"
 
-# 6. Get container IP
+# 6. Set WebUI admin password (required, via prompt or QBIT_PASS env)
+QBIT_USER="admin"
+if [ -n "${QBIT_PASS:-}" ]; then
+    log_info "Using password from QBIT_PASS env var"
+elif [ -t 0 ]; then
+    printf "%s" "Enter qBittorrent admin password for '$QBIT_USER': " >&2
+    read -rs QBIT_PASS_INPUT < /dev/tty 2>/dev/null || read -rs QBIT_PASS_INPUT || QBIT_PASS_INPUT=""
+    echo "" >&2
+    if [ -z "$QBIT_PASS_INPUT" ]; then
+        log_error "Password cannot be empty. Aborting."
+        exit 1
+    fi
+    printf "%s" "Confirm password: " >&2
+    read -rs QBIT_PASS_CONFIRM < /dev/tty 2>/dev/null || read -rs QBIT_PASS_CONFIRM || QBIT_PASS_CONFIRM=""
+    echo "" >&2
+    if [ "$QBIT_PASS_INPUT" != "$QBIT_PASS_CONFIRM" ]; then
+        log_error "Passwords do not match. Aborting."
+        exit 1
+    fi
+    QBIT_PASS="$QBIT_PASS_INPUT"
+    unset QBIT_PASS_INPUT QBIT_PASS_CONFIRM
+else
+    log_error "qBittorrent admin password not provided. Set QBIT_PASS env var or run interactively."
+    exit 1
+fi
+log_step "Setting qBittorrent admin password for user '$QBIT_USER'..."
+
+# Generate hash and update config in single call (password via stdin, avoid shell quoting)
+log_step "Updating qBittorrent.conf inside container $container_id..."
+QBIT_HASH=$(printf '%s' "$QBIT_PASS" | python3 "$SCRIPT_DIR/set_password.py" --container "$container_id" --user "$QBIT_USER")
+if [ -z "$QBIT_HASH" ]; then
+    log_warning "Failed to update qBittorrent password via helper"
+else
+    wait_container_ready "$container_id" || log_warning "Container may not be fully ready after password update"
+    log_success "Admin password updated for '$QBIT_USER'"
+fi
+
+# 7. Get container IP
 container_ip=$(get_container_ip "$container_id")
 
 if [ -n "$container_ip" ]; then
@@ -42,6 +79,15 @@ if [ -n "$container_ip" ]; then
 else
     log_success "qBittorrent installed!"
     log_warning "Could not determine container IP. Check with: pct exec $container_id -- hostname -I"
+fi
+
+if [ -n "$QBIT_PASS" ] && [ -n "$QBIT_HASH" ]; then
+    echo ""
+    log_success "──────────────────────────────────────────────────────"
+    log_success "  Admin credentials:"
+    log_success "    User:     $QBIT_USER"
+    log_success "    Password: $QBIT_PASS"
+    log_success "──────────────────────────────────────────────────────"
 fi
 
 echo ""
