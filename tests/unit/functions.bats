@@ -34,7 +34,7 @@ create_temp_root() {
 # -------------------------------------------------------------------
 
 @test "require_root fails when not root (current user)" {
-  run bash -c 'source "$REPO_ROOT/common/functions.sh"; require_root'
+  run env -u BATS_TEST_TMPDIR -u BASH_ENV bash -c 'source "$REPO_ROOT/common/functions.sh"; require_root'
   [ "$status" -ne 0 ]
   [[ "$output" == *"must be run as root"* ]]
 }
