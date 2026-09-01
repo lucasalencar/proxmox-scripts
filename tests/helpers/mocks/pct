@@ -59,7 +59,8 @@ EOF
       if [[ "$*" == *"id -u"* ]]; then
         # If a specific mock var is set (even empty), honor it
         user=$(echo "$*" | sed -n 's/.*id -u[[:space:]]*\([^[:space:]]*\).*/\1/p')
-        varname="MOCK_PCT_EXEC_ID_U_${user}"
+        user_safe=$(echo "$user" | tr '-' '_' | tr -cd 'A-Za-z0-9_')
+        varname="MOCK_PCT_EXEC_ID_U_${user_safe}"
         if [ "${!varname+set}" = "set" ]; then
           val="${!varname}"
           if [ -n "$val" ]; then echo "$val"; else echo ""; fi
@@ -78,10 +79,18 @@ EOF
     if [[ "$*" == *"id -u"* ]]; then
       # Extract username after id -u
       user=$(echo "$*" | sed -n 's/.*id -u[[:space:]]*\([^[:space:]]*\).*/\1/p')
-      # Check for mocked UID per user — honor even empty string if var is set
-      varname="MOCK_PCT_EXEC_ID_U_${user}"
+      # Sanitize user for variable name (www-data -> www_data)
+      user_safe=$(echo "$user" | tr '-' '_' | tr -cd 'A-Za-z0-9_')
+      varname="MOCK_PCT_EXEC_ID_U_${user_safe}"
       if [ "${!varname+set}" = "set" ]; then
         val="${!varname}"
+        echo "$val"
+        exit 0
+      fi
+      # Fallback: also check original with hyphen (for backwards compat, though invalid)
+      varname2="MOCK_PCT_EXEC_ID_U_${user}"
+      if [ "${!varname2+set}" = "set" ] 2>/dev/null; then
+        val="${!varname2:-}"
         echo "$val"
         exit 0
       fi

@@ -30,6 +30,12 @@ if $has_P; then
   # Read stdin fully
   input=$(cat)
 
+  # nextcloud datadirectory pattern: =>\s*'\K[^']+
+  if [[ "$pattern" == *"datadirectory"* ]] || [[ "$pattern" == *"=>\\s*'"* ]]; then
+    echo "$input" | sed -E "s/.*=>[[:space:]]*'([^']+).*/\1/" | head -1
+    exit 0
+  fi
+
   # ipconfig pattern: ipconfig\d:\s*ip=\K[^/]+
   if [[ "$pattern" == *"ipconfig"* ]]; then
     echo "$input" | sed -E 's/.*ip=([^\/[:space:]]+).*/\1/' | head -1
