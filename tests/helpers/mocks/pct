@@ -155,6 +155,10 @@ EOF
     exit 0
     ;;
   push)
+    if [ "${MOCK_PCT_PUSH_FAIL:-0}" = "1" ] || [ "${MOCK_PCT_FAIL:-0}" = "1" ]; then
+      echo "mock pct push failed" >&2
+      exit 1
+    fi
     exit 0
     ;;
   *)

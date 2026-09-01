@@ -279,3 +279,62 @@ teardown() {
   ! /usr/bin/grep -q -- "--tags" "$MOCK_LOG"
   ! /usr/bin/grep -q -- "--description" "$MOCK_LOG"
 }
+
+# -------------------------------------------------------------------
+# exec_script_in_container
+# -------------------------------------------------------------------
+
+@test "exec_script_in_container pushes and executes script" {
+  tmp_script=$(mktemp)
+  echo '#!/bin/bash
+echo hello' > "$tmp_script"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; exec_script_in_container 101 "'$tmp_script'"'
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "pct push 101 $tmp_script" "$MOCK_LOG"
+  /usr/bin/grep -q "pct exec 101 -- bash /tmp/$(basename $tmp_script)" "$MOCK_LOG"
+  rm -f "$tmp_script"
+}
+
+@test "exec_script_in_container passes args to remote script" {
+  tmp_script=$(mktemp)
+  echo '#!/bin/bash' > "$tmp_script"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; exec_script_in_container 101 "'$tmp_script'" arg1 arg2'
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "pct exec 101 -- bash /tmp/$(basename $tmp_script) arg1 arg2" "$MOCK_LOG"
+  rm -f "$tmp_script"
+}
+
+@test "exec_script_in_container fails when missing container_id" {
+  tmp_script=$(mktemp)
+  echo '#!/bin/bash' > "$tmp_script"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; exec_script_in_container "" "'$tmp_script'"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing container_id"* ]]
+  rm -f "$tmp_script"
+}
+
+@test "exec_script_in_container fails when host script not found" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; exec_script_in_container 101 /nonexistent/script.sh'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"host script not found"* ]]
+}
+
+@test "exec_script_in_container fails when pct push fails" {
+  tmp_script=$(mktemp)
+  echo '#!/bin/bash' > "$tmp_script"
+  export MOCK_PCT_PUSH_FAIL=1
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; exec_script_in_container 101 "'$tmp_script'"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Failed to push"* ]]
+  rm -f "$tmp_script"
+}
+
+@test "exec_script_in_container fails when pct exec fails" {
+  tmp_script=$(mktemp)
+  echo '#!/bin/bash' > "$tmp_script"
+  export MOCK_PCT_EXEC_FAIL=1
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; exec_script_in_container 101 "'$tmp_script'"'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Failed to execute"* ]]
+  rm -f "$tmp_script"
+}

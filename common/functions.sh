@@ -538,3 +538,30 @@ create_lxc_container() {
         return 1
     fi
 }
+
+# Pushes a host script into a container and executes it via bash.
+# Usage: exec_script_in_container <container_id> <host_script_path> [args...]
+exec_script_in_container() {
+    local container_id="$1"
+    local host_script="$2"
+    shift 2 || true
+
+    if [ -z "$container_id" ] || [ -z "$host_script" ]; then
+        log_error "exec_script_in_container: missing container_id or host_script"
+        return 1
+    fi
+    if [ ! -f "$host_script" ]; then
+        log_error "exec_script_in_container: host script not found: $host_script"
+        return 1
+    fi
+
+    local remote_path="/tmp/$(basename "$host_script")"
+    if ! pct push "$container_id" "$host_script" "$remote_path" 2>/dev/null; then
+        log_error "Failed to push $host_script to $container_id:$remote_path"
+        return 1
+    fi
+    if ! pct exec "$container_id" -- bash "$remote_path" "$@"; then
+        log_error "Failed to execute $remote_path in container $container_id"
+        return 1
+    fi
+}
