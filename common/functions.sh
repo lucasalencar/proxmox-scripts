@@ -237,20 +237,42 @@ get_container_ip() {
 
 # Stops a container, applies all bind mounts, and restarts it.
 # The container is guaranteed to be ready when this function returns.
-# Usage: apply_mounts <container_id> <host_path> <container_path> [host_path container_path] ...
-# Optionally pass a starting mp_index as the last argument (default: 1).
+# Usage: apply_mounts [--start-index N] <container_id> <host_path> <container_path> [host_path container_path] ...
 # Example: apply_mounts 106 /tank/data /data /tank/data/media /DATA/Media
+# Example: apply_mounts --start-index 5 106 /tank/data /data
 apply_mounts() {
+    local mp_index=1
+
+    # Parse optional --start-index flag (before container_id)
+    if [[ "$1" == "--start-index" ]]; then
+        if [[ -z "${2:-}" ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+            log_error "apply_mounts: --start-index requires numeric value"
+            return 1
+        fi
+        mp_index="$2"
+        shift 2
+    fi
+
     local container_id="$1"
+    if [[ -z "$container_id" ]]; then
+        log_error "apply_mounts: missing container_id"
+        return 1
+    fi
     shift
 
-    # Check if last argument is a numeric mp_index (only when an extra arg
-    # trails the host/container pairs, i.e. odd total arg count).
-    local mp_index=1
+    # Also handle --start-index after container_id
+    if [[ "$1" == "--start-index" ]]; then
+        if [[ -z "${2:-}" ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+            log_error "apply_mounts: --start-index requires numeric value"
+            return 1
+        fi
+        mp_index="$2"
+        shift 2
+    fi
+
+    # Deprecated trailing numeric without flag — warn but do not consume as index
     if [ $(( $# % 2 )) -ne 0 ] && [[ "${!#}" =~ ^[0-9]+$ ]]; then
-        mp_index="${!#}"
-        # Remove last argument (mp_index) from positional parameters
-        set -- "${@:1:$#-1}"
+        log_warning "apply_mounts: trailing numeric '${!#}' ignored — use --start-index N instead"
     fi
 
     log_step "Stopping container $container_id..."

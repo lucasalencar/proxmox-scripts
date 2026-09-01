@@ -65,32 +65,15 @@ if $has_P; then
     exit 0
   fi
 
-  # Fallback: try to handle \K by stripping it and using sed
+  # Fallback: unhandled \K pattern — fail loudly to force mock update
   if [[ "$pattern" == *"\K"* ]]; then
-    # Remove \K and try simple extraction
-    clean=$(echo "$pattern" | sed 's/\\K//')
-    # Use grep -oE with clean pattern stripped of PCRE specifics
-    echo "$input" | grep -oE "$clean" 2>/dev/null | head -1 || echo "$input" | head -1
-    exit 0
+    echo "Unhandled grep -P pattern (\\K): $pattern" >&2
+    exit 1
   fi
 
-  # Generic fallback: strip P and delegate
-  args=()
-  for arg in "$@"; do
-    if [[ "$arg" == -* ]]; then
-      newarg=$(echo "$arg" | tr -d 'P')
-      if [ -n "$newarg" ] && [ "$newarg" != "-" ]; then
-        args+=("$newarg")
-      fi
-    else
-      args+=("$arg")
-    fi
-  done
-  set +e
-  echo "$input" | /usr/bin/grep "${args[@]}" 2>/dev/null
-  status=$?
-  set -e
-  exit $status
+  # Generic fallback: unknown -P pattern — fail loudly
+  echo "Unhandled grep -P pattern: $pattern" >&2
+  exit 1
 fi
 
 # No -P, delegate to real grep

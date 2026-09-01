@@ -338,11 +338,27 @@ net0: name=eth0,bridge=vmbr0,ip=10.0.0.99/24,ip=10.0.0.99"
   grep -q "pct set 101 -mp2 /tank/data/b,mp=/DATA/B" "$MOCK_LOG"
 }
 
-@test "apply_mounts respects starting mp_index as last numeric arg" {
+@test "apply_mounts respects starting mp_index via --start-index" {
+  export MOCK_PCT_CONFIG="hostname: test"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; apply_mounts --start-index 5 101 /tank/data/new /DATA/New'
+  [ "$status" -eq 0 ]
+  grep -q "pct set 101 -mp5 /tank/data/new,mp=/DATA/New" "$MOCK_LOG"
+}
+
+@test "apply_mounts respects --start-index after container_id" {
+  export MOCK_PCT_CONFIG="hostname: test"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; apply_mounts 101 --start-index 5 /tank/data/new /DATA/New'
+  [ "$status" -eq 0 ]
+  grep -q "pct set 101 -mp5 /tank/data/new,mp=/DATA/New" "$MOCK_LOG"
+}
+
+@test "apply_mounts warns on deprecated trailing numeric without flag" {
   export MOCK_PCT_CONFIG="hostname: test"
   run bash -c 'source "$REPO_ROOT/common/functions.sh"; apply_mounts 101 /tank/data/new /DATA/New 5'
   [ "$status" -eq 0 ]
-  grep -q "pct set 101 -mp5 /tank/data/new,mp=/DATA/New" "$MOCK_LOG"
+  # Old trailing numeric should be ignored (warn) and not treated as mp_index, so mp1 should be used
+  grep -q "trailing numeric" "$MOCK_LOG" || [[ "$output" == *"trailing numeric"* ]]
+  grep -q "pct set 101 -mp1 /tank/data/new,mp=/DATA/New" "$MOCK_LOG"
 }
 
 @test "apply_mounts warns on odd number of path arguments" {
