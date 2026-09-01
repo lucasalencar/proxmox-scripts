@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/sleep.log}"
+/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+echo "sleep $*" >> "$LOG_FILE"
+exit 0

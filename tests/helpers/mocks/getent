@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/getent.log}"
+/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+echo "getent $*" >> "$LOG_FILE"
+
+if [ "${1:-}" = "passwd" ]; then
+  user="${2:-}"
+  if [ -n "${MOCK_GETENT_PASSWD:-}" ]; then
+    echo -e "$MOCK_GETENT_PASSWD"
+    exit 0
+  fi
+  # default: return user home
+  case "$user" in
+    testuser|lucas) echo "$user:x:1000:1000::/home/$user:/bin/bash" ;;
+    *) echo "$user:x:1001:1001::/home/$user:/bin/bash" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "group" ]; then
+  if [ -n "${MOCK_GETENT_GROUP:-}" ]; then
+    echo -e "$MOCK_GETENT_GROUP"
+    exit 0
+  fi
+  echo "familia:x:1000:"
+  exit 0
+fi
+exit 0

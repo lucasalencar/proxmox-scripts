@@ -1,0 +1,3 @@
+VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID
+200  home-assistant       running    4096              32.00 12345
+201  test-vm              stopped    2048              10.00 -

@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Mock grep that handles -P (PCRE) on macOS where BSD grep lacks -P
+set -euo pipefail
+
+LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/grep.log}"
+/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+echo "grep $*" >> "$LOG_FILE"
+
+has_P=false
+for arg in "$@"; do
+  if [[ "$arg" == *P* ]] && [[ "$arg" == -* ]]; then
+    has_P=true
+    break
+  fi
+done
+
+# Extract pattern (last non-option argument)
+extract_pattern() {
+  local pat=""
+  for arg in "$@"; do
+    if [[ "$arg" != -* ]]; then
+      pat="$arg"
+    fi
+  done
+  echo "$pat"
+}
+
+if $has_P; then
+  pattern=$(extract_pattern "$@")
+  # Handle known patterns from functions.sh
+  # Read stdin fully
+  input=$(cat)
+
+  # ipconfig pattern: ipconfig\d:\s*ip=\K[^/]+
+  if [[ "$pattern" == *"ipconfig"* ]]; then
+    echo "$input" | sed -E 's/.*ip=([^\/[:space:]]+).*/\1/' | head -1
+    # Only output if it looks like IP
+    exit 0
+  fi
+
+  # ip= pattern: ip=\K[^\s/]+
+  if [[ "$pattern" == "ip="* ]] || [[ "$pattern" == *"ip=\\K"* ]]; then
+    # Extract ip value
+    echo "$input" | grep -oE 'ip=[^[:space:]/]+' | cut -d= -f2 | head -1
+    exit 0
+  fi
+  if [[ "$pattern" == *"ip=\\K"* ]]; then
+    echo "$input" | grep -oE 'ip=[^[:space:]/]+' | cut -d= -f2 | head -1
+    exit 0
+  fi
+
+  # hostname pattern
+  if [[ "$pattern" == *"hostname"* ]]; then
+    echo "$input" | sed -E 's/.*hostname:[[:space:]]*([^[:space:]]+).*/\1/' | head -1
+    exit 0
+  fi
+
+  # mp pattern: ^mpN:\s*\K[^,]+
+  if [[ "$pattern" == *"mp"* ]]; then
+    # Pattern like ^mp1:\s*\K[^,]+  -> extract value after mpN: up to comma
+    # Get mp index from pattern
+    mp_index=$(echo "$pattern" | grep -oE 'mp[0-9]+' | head -1)
+    if [ -n "$mp_index" ]; then
+      echo "$input" | grep -E "^${mp_index}:" | sed -E "s/^${mp_index}:[[:space:]]*([^,]+).*/\1/" | head -1
+    fi
+    exit 0
+  fi
+
+  # Fallback: try to handle \K by stripping it and using sed
+  if [[ "$pattern" == *"\K"* ]]; then
+    # Remove \K and try simple extraction
+    clean=$(echo "$pattern" | sed 's/\\K//')
+    # Use grep -oE with clean pattern stripped of PCRE specifics
+    echo "$input" | grep -oE "$clean" 2>/dev/null | head -1 || echo "$input" | head -1
+    exit 0
+  fi
+
+  # Generic fallback: strip P and delegate
+  args=()
+  for arg in "$@"; do
+    if [[ "$arg" == -* ]]; then
+      newarg=$(echo "$arg" | tr -d 'P')
+      if [ -n "$newarg" ] && [ "$newarg" != "-" ]; then
+        args+=("$newarg")
+      fi
+    else
+      args+=("$arg")
+    fi
+  done
+  set +e
+  echo "$input" | /usr/bin/grep "${args[@]}" 2>/dev/null
+  status=$?
+  set -e
+  exit $status
+fi
+
+# No -P, delegate to real grep
+if command -v /usr/bin/grep >/dev/null 2>&1; then
+  set +e
+  /usr/bin/grep "$@" 2>/dev/null
+  status=$?
+  set -e
+  exit $status
+else
+  cat
+fi

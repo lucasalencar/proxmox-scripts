@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/id.log}"
+/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+echo "id $*" >> "$LOG_FILE"
+if [ -n "${MOCK_ID_UID:-}" ]; then
+  echo "$MOCK_ID_UID"
+  exit 0
+fi
+# For id -u username, return 1000 for known users
+if [[ "$*" == *"-u"* ]]; then
+  user=$(echo "$*" | awk '{print $NF}')
+  if [ "$user" = "testuser" ] || [ "$user" = "lucas" ] || [ "$user" = "alice" ]; then
+    echo "1000"
+  else
+    echo "1001"
+  fi
+  exit 0
+fi
+# delegate to real id
+/usr/bin/id "$@" 2>/dev/null || echo "1000"

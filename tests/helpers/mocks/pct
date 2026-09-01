@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# Mock for Proxmox pct command — logs and returns fixture data controlled via env vars.
+set -euo pipefail
+
+LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/pct.log}"
+/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+echo "pct $*" >> "$LOG_FILE"
+
+cmd="${1:-}"
+
+case "$cmd" in
+  list)
+    # Stateful override: if file exists in MOCK_TMPDIR, use it (for ensure_container_installed tests)
+    if [ -n "${MOCK_TMPDIR:-}" ] && [ -f "$MOCK_TMPDIR/pct_list" ]; then
+      cat "$MOCK_TMPDIR/pct_list"
+    elif [ -n "${MOCK_PCT_LIST+set}" ]; then
+      # Allow empty string to simulate no containers
+      if [ -n "$MOCK_PCT_LIST" ]; then
+        echo -e "$MOCK_PCT_LIST"
+      else
+        echo "VMID       Status     Lock         Name"
+      fi
+    elif [ -n "${MOCK_PCT_LIST_FILE:-}" ] && [ -f "$MOCK_PCT_LIST_FILE" ]; then
+      cat "$MOCK_PCT_LIST_FILE"
+    else
+      # Default: header + two containers
+      cat <<'EOF'
+VMID       Status     Lock         Name
+100        running                 caddy
+101        running                 jellyfin
+EOF
+    fi
+    ;;
+  config)
+    vmid="${2:-}"
+    # Try specific var MOCK_PCT_CONFIG_<VMID>
+    varname="MOCK_PCT_CONFIG_${vmid}"
+    val="${!varname:-}"
+    if [ -n "$val" ]; then
+      echo -e "$val"
+    elif [ -n "${MOCK_PCT_CONFIG:-}" ]; then
+      echo -e "$MOCK_PCT_CONFIG"
+    elif [ -n "${MOCK_PCT_CONFIG_FILE:-}" ] && [ -f "$MOCK_PCT_CONFIG_FILE" ]; then
+      cat "$MOCK_PCT_CONFIG_FILE"
+    else
+      cat <<EOF
+hostname: test-container
+cores: 2
+memory: 1024
+mp0: /tank/data/mediaserver,mp=/data
+EOF
+    fi
+    ;;
+  exec)
+    # pct exec <vmid> -- <cmd>
+    # Log already done. Need to handle -- separator.
+    # Check failure flag first for explicit failure simulation
+    if [ "${MOCK_PCT_EXEC_FAIL:-0}" = "1" ]; then
+      # If FAIL=1 and we are testing empty uid, return empty
+      if [[ "$*" == *"id -u"* ]]; then
+        # If a specific mock var is set (even empty), honor it
+        user=$(echo "$*" | sed -n 's/.*id -u[[:space:]]*\([^[:space:]]*\).*/\1/p')
+        varname="MOCK_PCT_EXEC_ID_U_${user}"
+        if [ "${!varname+set}" = "set" ]; then
+          val="${!varname}"
+          if [ -n "$val" ]; then echo "$val"; else echo ""; fi
+          exit 1
+        fi
+        # Return empty to simulate failure
+        echo ""
+        exit 1
+      fi
+      if [ -n "${MOCK_PCT_EXEC_OUTPUT:-}" ]; then
+        echo -e "$MOCK_PCT_EXEC_OUTPUT"
+      fi
+      exit 1
+    fi
+    # Detect specific commands
+    if [[ "$*" == *"id -u"* ]]; then
+      # Extract username after id -u
+      user=$(echo "$*" | sed -n 's/.*id -u[[:space:]]*\([^[:space:]]*\).*/\1/p')
+      # Check for mocked UID per user — honor even empty string if var is set
+      varname="MOCK_PCT_EXEC_ID_U_${user}"
+      if [ "${!varname+set}" = "set" ]; then
+        val="${!varname}"
+        echo "$val"
+        exit 0
+      fi
+      if [ -n "${MOCK_PCT_EXEC_ID_U:-}" ]; then
+        echo "$MOCK_PCT_EXEC_ID_U"
+        exit 0
+      fi
+      # Default UIDs
+      case "$user" in
+        jellyfin) echo "1000" ;;
+        root) echo "0" ;;
+        qbittorrent) echo "1000" ;;
+        www-data) echo "33" ;;
+        *) echo "1000" ;;
+      esac
+      exit 0
+    fi
+
+    if [[ "$*" == *"hostname -I"* ]]; then
+      if [ -n "${MOCK_PCT_EXEC_HOSTNAME_I:-}" ]; then
+        echo "$MOCK_PCT_EXEC_HOSTNAME_I"
+      elif [ -n "${MOCK_PCT_EXEC_OUTPUT:-}" ]; then
+        echo -e "$MOCK_PCT_EXEC_OUTPUT"
+      else
+        echo "10.0.0.5 10.0.0.6"
+      fi
+      if [ "${MOCK_PCT_EXEC_FAIL:-0}" = "1" ]; then
+        exit 1
+      fi
+      exit 0
+    fi
+
+    if [[ "$*" == *"systemctl is-system-running"* ]] || [[ "$*" == *"systemctl is-active"* ]] || [[ "$*" == *"true"* ]]; then
+      if [ -n "${MOCK_PCT_EXEC_OUTPUT:-}" ]; then
+        echo -e "$MOCK_PCT_EXEC_OUTPUT"
+      fi
+      if [ "${MOCK_PCT_EXEC_FAIL:-0}" = "1" ]; then
+        exit 1
+      fi
+      exit 0
+    fi
+
+    if [ -n "${MOCK_PCT_EXEC_OUTPUT:-}" ]; then
+      echo -e "$MOCK_PCT_EXEC_OUTPUT"
+    fi
+    if [ "${MOCK_PCT_EXEC_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  status)
+    if [ -n "${MOCK_PCT_STATUS:-}" ]; then
+      echo -e "$MOCK_PCT_STATUS"
+    else
+      echo "status: running"
+    fi
+    ;;
+  start|stop)
+    if [ "${MOCK_PCT_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  set)
+    if [ "${MOCK_PCT_SET_FAIL:-0}" = "1" ]; then
+      echo "mock pct set failed" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  push)
+    exit 0
+    ;;
+  *)
+    # For any other pct subcommand, succeed
+    if [ "${MOCK_PCT_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+esac

@@ -1,0 +1,5 @@
+VMID       Status     Lock         Name
+100        running                 caddy
+101        running                 jellyfin
+102        stopped                 nextcloud
+103        running                 casaos

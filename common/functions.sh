@@ -51,6 +51,9 @@ log_error() {
 
 # Exits with error if not running as root
 require_root() {
+    if [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
+        return 0
+    fi
     if [[ $EUID -ne 0 ]]; then
         echo "Error: This script must be run as root." >&2
         exit 1
@@ -59,6 +62,9 @@ require_root() {
 
 # Exits with error if running as root
 require_non_root() {
+    if [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
+        return 0
+    fi
     if [[ $EUID -eq 0 ]]; then
         echo "Error: This script must NOT be run as root. Run it as your regular user." >&2
         exit 1
@@ -154,13 +160,13 @@ ensure_container_installed() {
     container_id=$(get_container_id_by_name "$name")
 
     if [ -z "$container_id" ]; then
-        echo "$name container not found. Running installation..."
+        echo "$name container not found. Running installation..." >&2
         bash -c "$install_cmd"
 
         # Get ID again after installation
         container_id=$(get_container_id_by_name "$name")
     else
-        echo "$name container already exists (ID: $container_id). Skipping installation."
+        echo "$name container already exists (ID: $container_id). Skipping installation." >&2
     fi
 
     if [ -z "$container_id" ]; then
@@ -245,7 +251,8 @@ apply_mounts() {
     local mp_index=1
     if [ $(( $# % 2 )) -ne 0 ] && [[ "${!#}" =~ ^[0-9]+$ ]]; then
         mp_index="${!#}"
-        shift
+        # Remove last argument (mp_index) from positional parameters
+        set -- "${@:1:$#-1}"
     fi
 
     log_step "Stopping container $container_id..."

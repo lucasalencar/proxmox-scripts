@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/openssl.log}"
+/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+echo "openssl $*" >> "$LOG_FILE"
+# For rand -base64 12, return dummy base64
+if [[ "$*" == *"rand"* ]]; then
+  echo "mockBase64Pass123"
+  exit 0
+fi
+# delegate to real openssl if exists
+if command -v /usr/bin/openssl >/dev/null 2>&1; then
+  /usr/bin/openssl "$@" 2>/dev/null || echo "mockpass"
+else
+  echo "mockpass"
+fi

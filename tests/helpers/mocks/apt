@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/apt.log}"
+/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+echo "apt $*" >> "$LOG_FILE"
+exit 0
