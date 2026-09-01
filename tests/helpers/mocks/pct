@@ -87,13 +87,6 @@ EOF
         echo "$val"
         exit 0
       fi
-      # Fallback: also check original with hyphen (for backwards compat, though invalid)
-      varname2="MOCK_PCT_EXEC_ID_U_${user}"
-      if [ "${!varname2+set}" = "set" ] 2>/dev/null; then
-        val="${!varname2:-}"
-        echo "$val"
-        exit 0
-      fi
       if [ -n "${MOCK_PCT_EXEC_ID_U:-}" ]; then
         echo "$MOCK_PCT_EXEC_ID_U"
         exit 0

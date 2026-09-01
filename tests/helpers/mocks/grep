@@ -30,8 +30,8 @@ if $has_P; then
   # Read stdin fully
   input=$(cat)
 
-  # nextcloud datadirectory pattern: =>\s*'\K[^']+
-  if [[ "$pattern" == *"datadirectory"* ]] || [[ "$pattern" == *"=>\\s*'"* ]]; then
+  # nextcloud datadirectory pattern: =>\s*'\K[^']+  and  =>\s*'\K
+  if [[ "$pattern" == *"=>\\s*'"* ]] || [[ "$pattern" == *"=>"* ]] || [[ "$pattern" == *"datadirectory"* ]]; then
     echo "$input" | sed -E "s/.*=>[[:space:]]*'([^']+).*/\1/" | head -1
     exit 0
   fi
