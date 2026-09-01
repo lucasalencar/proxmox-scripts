@@ -4,20 +4,23 @@ qBittorrent WebUI password helper.
 
 Generates PBKDF2-SHA512 hash and updates qBittorrent.conf.
 Can also reset password directly inside a Proxmox LXC container.
+Always generates a random password (no manual password input).
 
 Usage:
-  # Generate hash only (password via stdin)
-  printf '%s' "mypassword" | python3 set_password.py --generate
-
-  # Update config (password via stdin, hash generated internally)
-  printf '%s' "mypassword" | python3 set_password.py --input /tmp/qbit.conf --output /tmp/qbit.new --user admin
+  # Generate random password + hash
+  python3 set_password.py --generate
+  python3 set_password.py --generate --password-length 20
 
   # Update config with pre-generated hash
   python3 set_password.py --input /tmp/qbit.conf --output /tmp/qbit.new --user admin --hash '@ByteArray(...)'
 
-  # Full reset inside container (password via stdin or --password)
-  printf '%s' "mypassword" | python3 set_password.py --container 100 --user admin
-  python3 set_password.py --container 100 --password "mypassword" --user admin
+  # Update config with auto-generated random password
+  python3 set_password.py --input /tmp/qbit.conf --output /tmp/qbit.new --user admin
+
+  # Full reset inside container (always auto-generates random password)
+  python3 set_password.py --container 100 --user admin
+  python3 set_password.py --container 100 --user admin --password-length 20
+  python3 set_password.py --container 100 --user admin --hash '@ByteArray(...)'
 
 Hash algorithm matches https://github.com/qbittorrent/qBittorrent/blob/master/src/base/utils/password.cpp
 and https://gist.github.com/hastinbe/8b8d247f17481cfc262a98d661bc0fd5
@@ -28,9 +31,24 @@ import base64
 import hashlib
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
+
+
+def _strip_password(pw: str | None) -> str | None:
+    if pw is None:
+        return None
+    # Strip only trailing CR/LF from stdin/pipe (preserve intentional spaces)
+    # Don't use .strip() to avoid breaking passwords with leading/trailing spaces
+    return pw.rstrip("\r\n")
+
+
+def generate_password(length: int = 16) -> str:
+    # Same charset as qBittorrent Utils::Password::generate (no 0,1,l,o etc.)
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 def generate_hash(password: str) -> str:
@@ -67,13 +85,20 @@ def run_cmd(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 def reset_container(container_id: str, user: str, password: str | None, qhash: str | None) -> str:
     if not qhash:
+        password = _strip_password(password)
         if not password:
             print("error: password required via stdin, --password or --hash", file=sys.stderr)
             sys.exit(1)
         qhash = generate_hash(password)
 
-    # Stop service
+    # Stop service (verify it actually stopped to avoid config overwrite on restart)
     run_cmd(["pct", "exec", container_id, "--", "systemctl", "stop", "qbittorrent-nox"])
+    for _ in range(10):
+        r = run_cmd(["pct", "exec", container_id, "--", "systemctl", "is-active", "qbittorrent-nox"])
+        if r.stdout.strip() != "active":
+            break
+        import time
+        time.sleep(1)
 
     # Fetch config
     tmp_in = tempfile.mktemp()
@@ -115,9 +140,9 @@ def reset_container(container_id: str, user: str, password: str | None, qhash: s
         pass
 
     run_cmd(["pct", "exec", container_id, "--", "systemctl", "start", "qbittorrent-nox"])
-    # Wait for ready (best effort)
+    # Wait for ready (best effort) - check WebUI responds
     for _ in range(15):
-        r = run_cmd(["pct", "exec", container_id, "--", "true"])
+        r = run_cmd(["pct", "exec", container_id, "--", "bash", "-c", "curl -sf http://127.0.0.1:8090/api/v2/app/version >/dev/null 2>&1 || systemctl is-active qbittorrent-nox >/dev/null 2>&1"])
         if r.returncode == 0:
             break
         import time
@@ -127,45 +152,42 @@ def reset_container(container_id: str, user: str, password: str | None, qhash: s
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="qBittorrent password helper")
-    parser.add_argument("--generate", action="store_true", help="Generate hash from stdin and print to stdout")
+    parser = argparse.ArgumentParser(description="qBittorrent password helper (always generates random password)", allow_abbrev=False)
+    parser.add_argument("--generate", action="store_true", help="Generate random password + hash and print to stdout")
     parser.add_argument("--input", help="Input qBittorrent.conf path")
     parser.add_argument("--output", help="Output qBittorrent.conf path")
     parser.add_argument("--user", default="admin", help="WebUI username (default: admin)")
-    parser.add_argument("--hash", dest="qhash", help="Pre-generated @ByteArray hash (if omitted, read password from stdin and generate)")
+    parser.add_argument("--hash", dest="qhash", help="Pre-generated @ByteArray hash (if omitted, generate random password)")
     parser.add_argument("--container", help="LXC container ID to reset password directly (requires pct)")
-    parser.add_argument("--password", help="Password string (alternative to stdin, avoid shell history)")
+    parser.add_argument("--password-length", type=int, default=16, help="Length for generated password (default: 16)")
+    parser.add_argument("--random", action="store_true", help=argparse.SUPPRESS)  # deprecated, kept for compat
     args = parser.parse_args()
 
     if args.generate:
-        password = args.password if args.password is not None else sys.stdin.read()
-        if not password:
-            print("error: password required via stdin or --password", file=sys.stderr)
-            sys.exit(1)
-        print(generate_hash(password))
+        password = generate_password(args.password_length)
+        print(f"{password} {generate_hash(password)}")
         return
 
     if args.container:
-        password = args.password
-        if password is None and not args.qhash:
-            # Try stdin if not provided via --password
-            if not sys.stdin.isatty():
-                password = sys.stdin.read()
-            else:
-                password = None
-        qhash = reset_container(args.container, args.user, password, args.qhash)
-        print(qhash)
+        # Always auto-generate unless --hash is provided
+        if args.qhash:
+            qhash = reset_container(args.container, args.user, None, args.qhash)
+            print(qhash)
+        else:
+            password = generate_password(args.password_length)
+            qhash = reset_container(args.container, args.user, password, None)
+            print(f"{password} {qhash}")
         return
 
     if args.input and args.output:
         qhash = args.qhash
         if not qhash:
-            password = args.password if args.password is not None else sys.stdin.read()
-            if not password:
-                print("error: password required via stdin, --password or --hash", file=sys.stderr)
-                sys.exit(1)
+            password = generate_password(args.password_length)
             qhash = generate_hash(password)
-        update_config(args.input, args.output, args.user, qhash)
+            update_config(args.input, args.output, args.user, qhash)
+            print(f"{password} {qhash}")
+        else:
+            update_config(args.input, args.output, args.user, qhash)
         return
 
     parser.print_help()
