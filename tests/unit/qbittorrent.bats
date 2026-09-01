@@ -26,26 +26,16 @@ teardown() {
 # qbittorrent/install.sh
 # -------------------------------------------------------------------
 
-@test "qbittorrent install requires QBIT_PASS when non-interactive" {
-  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n104        running                 qbittorrent'
-  export MOCK_PCT_CONFIG="hostname: qbittorrent"
-  export MOCK_PCT_EXEC_ID_U_qbittorrent="1000"
-  unset QBIT_PASS
-  run bash "$REPO_ROOT/qbittorrent/install.sh" </dev/null
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"QBIT_PASS"* ]]
-}
-
-@test "qbittorrent install succeeds with QBIT_PASS env var" {
+@test "qbittorrent install generates password and succeeds" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n104        running                 qbittorrent'
   export MOCK_PCT_CONFIG="hostname: qbittorrent"
   export MOCK_PCT_EXEC_ID_U_qbittorrent="1000"
   export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.7"
-  export QBIT_PASS="supersecret123"
 
   run bash "$REPO_ROOT/qbittorrent/install.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"qBittorrent installed"* ]]
+  [[ "$output" == *"mockpass"* ]] || [[ "$output" == *"Password:"* ]]
   grep -q "python3" "$MOCK_LOG"
   grep -q "setfacl" "$MOCK_LOG"
   grep -q "pct set 104 -mp1 /tank/data/mediaserver,mp=/data" "$MOCK_LOG"
@@ -55,11 +45,22 @@ teardown() {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n104        running                 qbittorrent'
   export MOCK_PCT_CONFIG="hostname: qbittorrent"
   export MOCK_PCT_EXEC_ID_U_qbittorrent="1000"
-  export QBIT_PASS="testpass"
 
   run bash "$REPO_ROOT/qbittorrent/install.sh"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"qBittorrent installed"* ]]
   grep -q "mkdir" "$MOCK_LOG"
+}
+
+@test "qbittorrent install handles python helper failure" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n104        running                 qbittorrent'
+  export MOCK_PCT_CONFIG="hostname: qbittorrent"
+  export MOCK_PCT_EXEC_ID_U_qbittorrent="1000"
+  export MOCK_PYTHON_OUTPUT=""
+
+  run bash "$REPO_ROOT/qbittorrent/install.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Failed to generate"* ]]
 }
 
 # -------------------------------------------------------------------
