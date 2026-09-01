@@ -18,7 +18,7 @@ Host-level setup and maintenance scripts for the Proxmox server.
 
 | Script | Description |
 |---|---|
-| `storage-setup/001-create-datasets.sh` | Creates ZFS datasets (`tank/data/media`, `memorias`, `downloads`, `primary_user`) with optimized settings. |
+| `storage-setup/001-create-datasets.sh` | Creates ZFS datasets (`tank/data/mediaserver` with `media/{Movies,Series,Music,Shows}` + `downloads/{series,movies,music,shows}`, `memorias`, `primary_user`) with optimized settings. |
 | `storage-setup/002-exfat-external-drive.sh` | Installs exFAT support for external drives. |
 | `storage-setup/create-user-dataset.sh <username>` | Creates a private ZFS dataset for a specific user. |
 

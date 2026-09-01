@@ -356,3 +356,17 @@ add_dataset_acl() {
     setfacl -R -m m::rwx "$path"
     setfacl -R -d -m m::rwx "$path"
 }
+
+# Returns the host UID for a user inside a container (container UID + 100000)
+# Usage: host_uid=$(get_host_uid <container_id> <username>) || exit 1
+get_host_uid() {
+    local container_id="$1"
+    local username="$2"
+    local uid
+    uid=$(pct exec "$container_id" -- id -u "$username" 2>/dev/null)
+    if [ -z "$uid" ] || ! [[ "$uid" =~ ^[0-9]+$ ]]; then
+        log_error "Could not determine UID for user '$username' inside container $container_id"
+        return 1
+    fi
+    echo $((uid + 100000))
+}

@@ -15,26 +15,24 @@ log_info "Container ID: $container_id"
 
 # 2. Create download category folders (idempotent)
 log_step "Ensuring download category folders exist..."
-mkdir -p /tank/data/downloads/{series,movies,music}
+mkdir -p /tank/data/mediaserver/downloads/{series,movies,music,shows}
+mkdir -p /tank/data/mediaserver/media/{Movies,Series,Music,Shows}
 
 # 3. Apply bind mount (stops, sets, restarts, and waits for ready)
-log_step "Mounting /tank/data -> /data"
-apply_mounts "$container_id" /tank/data /data
+log_step "Mounting /tank/data/mediaserver -> /data"
+apply_mounts "$container_id" /tank/data/mediaserver /data
 
-# 4. Discover internal UID of qBittorrent user
-internal_uid=$(pct exec "$container_id" -- id -u qbittorrent 2>/dev/null)
-if [ -z "$internal_uid" ]; then
+# 4. Discover host UID of qBittorrent user
+host_uid=$(get_host_uid "$container_id" qbittorrent) || {
     log_warning "User 'qbittorrent' not found, falling back to root"
-    internal_uid=$(pct exec "$container_id" -- id -u root)
-fi
-host_uid=$((internal_uid + 100000))
+    host_uid=$(get_host_uid "$container_id" root) || exit 1
+}
 
-log_info "Internal UID: $internal_uid -> Host UID: $host_uid"
+log_info "Host UID: $host_uid"
 
-# 5. Apply ACLs on downloads and media datasets
-log_step "Granting UID $host_uid access to downloads and media..."
-add_dataset_acl "/tank/data/downloads" "$host_uid"
-add_dataset_acl "/tank/data/media" "$host_uid"
+# 5. Apply ACLs on mediaserver dataset
+log_step "Granting UID $host_uid access to mediaserver..."
+add_dataset_acl "/tank/data/mediaserver" "$host_uid"
 
 # 6. Get container IP
 container_ip=$(get_container_ip "$container_id")
@@ -55,5 +53,6 @@ log_info "  Categories:"
 log_info "    - series → /data/downloads/series"
 log_info "    - movies → /data/downloads/movies"
 log_info "    - music  → /data/downloads/music"
+log_info "    - shows  → /data/downloads/shows"
 log_info "  Connection > Listening Port: TCP 6881"
 log_info "  BitTorrent > Privacy > Encryption: Allow encryption"

@@ -8,11 +8,10 @@ source "$(dirname "$0")/../common/functions.sh"
 # Load primary user
 PRIMARY_USER=$(get_primary_user) || exit 1
 
-log_step "Creating main ZFS datasets (tank/data, media, memorias, downloads)..."
-zfs create tank/data
-zfs create tank/data/media
-zfs create tank/data/memorias
-zfs create tank/data/downloads
+log_step "Creating main ZFS datasets (tank/data, mediaserver, memorias)..."
+zfs list tank/data >/dev/null 2>&1 || zfs create tank/data
+zfs list tank/data/mediaserver >/dev/null 2>&1 || zfs create tank/data/mediaserver
+zfs list tank/data/memorias >/dev/null 2>&1 || zfs create tank/data/memorias
 
 # Ensure all datasets are mounted before applying permissions
 zfs mount -a
@@ -22,16 +21,14 @@ zfs mount -a
 # - Current atime (write last access timestamp): zfs get atime /tank/data/memorias
 
 log_step "Setting up ZFS optimization properties..."
-zfs set recordsize=1M tank/data/media
-zfs set atime=off tank/data/media
+zfs set recordsize=1M tank/data/mediaserver
+zfs set atime=off tank/data/mediaserver
 zfs set recordsize=1M tank/data/memorias
 zfs set atime=off tank/data/memorias
 
-# Downloads: mixed file sizes, keep default recordsize
-zfs set atime=off tank/data/downloads
-
 log_step "Creating media organization folders..."
-mkdir -p /tank/data/media/Movies /tank/data/media/Series /tank/data/media/Music
+mkdir -p /tank/data/mediaserver/media/{Movies,Series,Music,Shows}
+mkdir -p /tank/data/mediaserver/downloads/{series,movies,music,shows}
 
 log_step "Configuring ZFS ACLs..."
 
@@ -53,12 +50,11 @@ setfacl -b /tank/data # Clear all
 setfacl -m "$root_acl" /tank/data
 setfacl -d -m "$root_acl" /tank/data # Set as default for inheritance
 
-# 2. SHARED DATA: Apply RECURSIVE access for Media and Memorias
+# 2. SHARED DATA: Apply RECURSIVE access for mediaserver and memorias
 
 log_step "Applying full recursive ACLs to shared datasets..."
-setup_dataset_acls tank/data/media /tank/data/media 1000 100000
+setup_dataset_acls tank/data/mediaserver /tank/data/mediaserver 1000 100000
 setup_dataset_acls tank/data/memorias /tank/data/memorias 1000 100000
-setup_dataset_acls tank/data/downloads /tank/data/downloads 1000 100000
 
 # 3. PRIVATE DATA: Create/Secure primary user dataset
 # This script applies strict ACLs/Permissions only for the user.

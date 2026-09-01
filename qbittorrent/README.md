@@ -42,6 +42,7 @@ Follow the [TRaSH Guides - qBittorrent Basic Setup](https://trash-guides.info/Do
 | series | `/data/downloads/series` |
 | movies | `/data/downloads/movies` |
 | music | `/data/downloads/music` |
+| shows | `/data/downloads/shows` |
 
 ### Connection > Listening Port
 
@@ -61,15 +62,17 @@ Follow the [TRaSH Guides - qBittorrent Basic Setup](https://trash-guides.info/Do
 ## Folder Structure
 
 ```
-/tank/data/                  →  /data/ (inside container)
+/tank/data/mediaserver/      →  /data/ (inside container, single ZFS dataset for hardlinks)
 ├── downloads/               →  /data/downloads/
 │   ├── series/
 │   ├── movies/
-│   └── music/
+│   ├── music/
+│   └── shows/
 └── media/                   →  /data/media/
     ├── Series/
     ├── Movies/
-    └── Music/
+    ├── Music/
+    └── Shows/
 ```
 
-Hardlinks work because `/data/downloads` and `/data/media` are mounted as a single filesystem via `/tank/data → /data`.
+Hardlinks work because `/data/downloads` and `/data/media` are on the same filesystem via `/tank/data/mediaserver → /data` (isolated).

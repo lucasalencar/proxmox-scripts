@@ -65,3 +65,10 @@ During a session, append any non-obvious fix, recurring pitfall, or design decis
 Do **not** duplicate rules already explicitly stated in `AGENTS.md` as learnings — only capture knowledge that goes beyond these rules.
 
 **Keep learnings generalizable** — they should describe patterns, behaviors, or pitfalls that could apply to multiple scripts or contexts, not specific fixes applied to a particular script. For example, prefer "Proxmox `pct exec` does not support `--env`; use `env KEY=val` inside the container command instead" over "Fixed sync-users.sh by using env instead of --env".
+
+### 11. Code comments — keep concise and sparse
+
+Code comments should describe **what** is being done, not **why**. Keep them short and avoid long-winded rationale. Put the reasoning in docs, PR descriptions, or `LEARNINGS.md` instead. This applies to `*.sh` and source files; `docs/*.md` may keep why-explanations for user understanding.
+
+- Add a comment only when truly necessary — prefer self-explanatory code and helper names.
+- Before adding a comment, check if it should be a log instead (`log_step`, `log_info`, `log_success`, etc.) to give the user runtime visibility.

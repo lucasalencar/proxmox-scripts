@@ -34,7 +34,7 @@ fi
 # This ensures the secondary user can read/write shared data
 # without needing complex group permissions.
 log_step "Granting $SECONDARY_USER (UID $SECONDARY_UID) access to shared datasets..."
-add_dataset_acl "/tank/data/media" "$SECONDARY_UID"
+add_dataset_acl "/tank/data/mediaserver/media" "$SECONDARY_UID"
 add_dataset_acl "/tank/data/memorias" "$SECONDARY_UID"
 
 echo ""
