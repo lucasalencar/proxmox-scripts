@@ -5,7 +5,7 @@ setup() {
   export MOCK_LOG="$MOCK_TMPDIR/mock.log"
   export PATH="$BATS_TEST_DIRNAME/../helpers/mocks:$PATH"
   export REPO_ROOT="$BATS_TEST_DIRNAME/../.."
-  export MOCK_BYPASS_ROOT=1
+  export BASH_ENV="$BATS_TEST_DIRNAME/../helpers/bypass_root.sh"
   if [ -f "$REPO_ROOT/.server_users" ]; then
     cp "$REPO_ROOT/.server_users" "$MOCK_TMPDIR/.server_users.bak"
   fi

@@ -50,26 +50,24 @@ log_error() {
 }
 
 # Exits with error if not running as root
+if ! declare -F require_root >/dev/null 2>&1; then
 require_root() {
-    if [ -n "${BATS_TEST_TMPDIR:-}" ] && [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
-        return 0
-    fi
     if [[ $EUID -ne 0 ]]; then
         echo "Error: This script must be run as root." >&2
         exit 1
     fi
 }
+fi
 
 # Exits with error if running as root
+if ! declare -F require_non_root >/dev/null 2>&1; then
 require_non_root() {
-    if [ -n "${BATS_TEST_TMPDIR:-}" ] && [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
-        return 0
-    fi
     if [[ $EUID -eq 0 ]]; then
         echo "Error: This script must NOT be run as root. Run it as your regular user." >&2
         exit 1
     fi
 }
+fi
 
 # Returns the primary username from .server_users file (first user in the list)
 get_primary_user() {
