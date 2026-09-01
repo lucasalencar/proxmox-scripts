@@ -31,7 +31,7 @@ All code and docs in English.
 
 ### 5. Test-Driven Development (TDD)
 
-Use TDD (Red-Green-Refactor) for elaborate code projects (Python/Go libs, CLI tools, business logic). Bash scripts are exempt.
+Use TDD (Red-Green-Refactor) when implementing new scripts or features in the repository, including Bash scripts. For elaborate code projects (Python/Go libs, CLI tools, business logic) TDD is mandatory. When adding or refactoring Bash scripts, write bats tests first (Red) using the mock bin in `tests/helpers/mocks`.
 
 ### 6. Caddy compatibility check
 
