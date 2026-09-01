@@ -26,7 +26,7 @@ jobs:
           shellcheck --version
 
       - name: Run bats unit tests
-        run: make test-verbose
+        run: make test-verbose || (echo "--- verbose run for failures ---" && bats --verbose-run tests/unit/nextcloud.bats tests/unit/qbittorrent.bats; exit 1)
 
       - name: Run shellcheck
         run: make lint

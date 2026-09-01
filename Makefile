@@ -5,7 +5,7 @@ test:
 	@BATS_WARN_BW01=0 BATS_WARN_BW02=0 bats tests/unit
 
 test-verbose:
-	@BATS_WARN_BW01=0 BATS_WARN_BW02=0 bats --tap tests/unit
+	@BATS_WARN_BW01=0 BATS_WARN_BW02=0 bats --verbose-run tests/unit
 
 lint:
 	@shellcheck common/*.sh */*.sh */*/*.sh 2>&1 | head -100
