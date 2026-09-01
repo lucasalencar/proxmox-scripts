@@ -403,3 +403,138 @@ get_host_uid() {
     fi
     echo $((uid + 100000))
 }
+
+# --- PVE LXC provisioning helpers (reusable for any custom Debian LXC) ---
+
+# Returns template storage name (default: local)
+# Usage: storage=$(get_pve_template_storage)
+get_pve_template_storage() {
+    echo "local"
+}
+
+# Returns rootfs storage name (local-lvm if present, else local)
+# Usage: storage=$(get_pve_rootfs_storage)
+get_pve_rootfs_storage() {
+    if pvesm status 2>/dev/null | grep -q "local-lvm"; then
+        echo "local-lvm"
+    else
+        echo "local"
+    fi
+}
+
+# Returns the default network bridge (auto-detected or vmbr0)
+# Usage: bridge=$(detect_pve_bridge)
+detect_pve_bridge() {
+    local detected
+    detected=$(ip -o link show 2>/dev/null | grep -o "vmbr[0-9]*" | head -1)
+    if [ -n "$detected" ]; then
+        echo "$detected"
+    else
+        echo "vmbr0"
+    fi
+}
+
+# Returns the next available CTID from Proxmox
+# Usage: ctid=$(get_pve_next_id) || exit 1
+get_pve_next_id() {
+    local ctid
+    ctid=$(pvesh get /cluster/nextid 2>/dev/null)
+    if [ -z "$ctid" ]; then
+        log_error "Failed to get next CTID from pvesh"
+        return 1
+    fi
+    echo "$ctid"
+}
+
+# Ensures a Debian template is present on the given storage.
+# Prints the template name (e.g. debian-13-standard_13.0-1_amd64.tar.zst) to stdout.
+# Logs go to stderr so command substitution stays clean.
+# Usage: template=$(ensure_debian_template 13 [storage]) || exit 1
+ensure_debian_template() {
+    local version="${1:-13}"
+    local storage="${2:-$(get_pve_template_storage)}"
+    local template=""
+
+    pveam update >/dev/null 2>&1 || true
+
+    template=$(pveam available --section system 2>/dev/null | grep -E "debian-${version}-standard" | awk '{print $2}' | sort -V | tail -1)
+    if [ -z "$template" ]; then
+        template=$(pveam available 2>/dev/null | grep -E "debian-${version}" | awk '{print $2}' | sort -V | tail -1)
+    fi
+    if [ -z "$template" ]; then
+        log_error "Could not find Debian ${version} template via pveam available" >&2
+        return 1
+    fi
+
+    local template_file
+    template_file=$(basename "$template")
+    log_info "Template: $template" >&2
+
+    if ! pveam list "$storage" 2>/dev/null | grep -q "$template_file"; then
+        log_step "Downloading template $template to $storage..." >&2
+        if ! pveam download "$storage" "$template" 2>&1; then
+            log_error "Failed to download template $template" >&2
+            return 1
+        fi
+    else
+        log_info "Template $template_file already present" >&2
+    fi
+
+    echo "$template"
+}
+
+# Creates a Debian LXC with opinionated defaults (unprivileged, nesting, DHCP).
+# Starts the container and waits until ready.
+# Usage: create_lxc_container <ctid> <hostname> <template_storage> <template_file> <rootfs_storage> <bridge> [cores] [memory] [disk_gb] [swap] [tags] [description]
+create_lxc_container() {
+    local ctid="$1"
+    local hostname="$2"
+    local template_storage="$3"
+    local template_file="$4"
+    local rootfs_storage="$5"
+    local bridge="$6"
+    local cores="${7:-2}"
+    local memory="${8:-2048}"
+    local disk="${9:-20}"
+    local swap="${10:-512}"
+    local tags="${11:-}"
+    local description="${12:-}"
+
+    if [ -z "$ctid" ] || [ -z "$hostname" ] || [ -z "$template_storage" ] || [ -z "$template_file" ] || [ -z "$rootfs_storage" ] || [ -z "$bridge" ]; then
+        log_error "create_lxc_container: missing required argument (ctid/hostname/template_storage/template_file/rootfs_storage/bridge)"
+        return 1
+    fi
+
+    local create_args=(
+        "$ctid" "${template_storage}:vztmpl/${template_file}"
+        --hostname "$hostname"
+        --cores "$cores"
+        --memory "$memory"
+        --swap "$swap"
+        --rootfs "${rootfs_storage}:${disk}"
+        --unprivileged 1
+        --features nesting=1,keyctl=1
+        --net0 "name=eth0,bridge=${bridge},ip=dhcp,firewall=1"
+        --ostype debian
+        --onboot 1
+    )
+    if [ -n "$tags" ]; then
+        create_args+=(--tags "$tags")
+    fi
+    if [ -n "$description" ]; then
+        create_args+=(--description "$description")
+    fi
+
+    log_step "Creating LXC $ctid ($hostname)..."
+    if ! pct create "${create_args[@]}"; then
+        log_error "pct create failed for $hostname ($ctid)"
+        return 1
+    fi
+
+    log_info "Starting container $ctid..."
+    pct start "$ctid"
+    if ! wait_container_ready "$ctid" 60 2; then
+        log_error "Container $ctid not ready after creation"
+        return 1
+    fi
+}
