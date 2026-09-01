@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Mock for jq — if MOCK_JQ_OUTPUT set, use it, else delegate to real jq
 set -euo pipefail
-LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/jq.log}"
-/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-echo "jq $*" >> "$LOG_FILE"
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "jq" "$@"
 if [ -n "${MOCK_JQ_OUTPUT:-}" ]; then
   echo -e "$MOCK_JQ_OUTPUT"
   exit 0

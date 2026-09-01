@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/realpath.log}"
-/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-echo "realpath $*" >> "$LOG_FILE"
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "realpath" "$@"
 
 # If MOCK_REALPATH is set, use it
 if [ -n "${MOCK_REALPATH:-}" ]; then

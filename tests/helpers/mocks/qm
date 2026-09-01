@@ -2,9 +2,8 @@
 # Mock for Proxmox qm command
 set -euo pipefail
 
-LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/qm.log}"
-/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-echo "qm $*" >> "$LOG_FILE"
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "qm" "$@"
 
 cmd="${1:-}"
 

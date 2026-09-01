@@ -6,8 +6,6 @@ setup_mocks() {
   export MOCK_TMPDIR=$(mktemp -d)
   export MOCK_LOG="$MOCK_TMPDIR/mock.log"
   export PATH="$BATS_TEST_DIRNAME/../helpers/mocks:$PATH"
-  # Also ensure sleep mock is used
-  export PATH="$BATS_TEST_DIRNAME/../helpers/mocks:$PATH"
 }
 
 teardown_mocks() {

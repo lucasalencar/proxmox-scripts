@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/setfacl.log}"
-/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-echo "setfacl $*" >> "$LOG_FILE"
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "setfacl" "$@"
 if [ "${MOCK_SETFACL_FAIL:-0}" = "1" ]; then exit 1; fi
 exit 0

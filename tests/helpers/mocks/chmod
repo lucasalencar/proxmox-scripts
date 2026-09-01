@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/chmod.log}"
-/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-echo "chmod $*" >> "$LOG_FILE"
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "chmod" "$@"
 exit 0

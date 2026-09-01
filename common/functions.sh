@@ -51,7 +51,7 @@ log_error() {
 
 # Exits with error if not running as root
 require_root() {
-    if [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
+    if [ -n "${BATS_TEST_TMPDIR:-}" ] && [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
         return 0
     fi
     if [[ $EUID -ne 0 ]]; then
@@ -62,7 +62,7 @@ require_root() {
 
 # Exits with error if running as root
 require_non_root() {
-    if [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
+    if [ -n "${BATS_TEST_TMPDIR:-}" ] && [ -n "${MOCK_BYPASS_ROOT:-}" ]; then
         return 0
     fi
     if [[ $EUID -eq 0 ]]; then
@@ -114,7 +114,7 @@ is_user_registered() {
         return 1
     fi
 
-    grep -qx "$username" "$users_file"
+    grep -Fqx "$username" "$users_file"
 }
 
 # Adds a username to the end of .server_users if not already registered
@@ -304,7 +304,7 @@ get_container_id_by_name() {
     if [ -z "$name" ]; then
         return 1
     fi
-    pct list | grep -i "$name" | sort -n | tail -1 | awk '{print $1}'
+    pct list | grep -F -i "$name" | sort -n | tail -1 | awk '{print $1}'
 }
 
 # Configures ZFS ACLs for specific users and enables inheritance

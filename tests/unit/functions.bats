@@ -164,11 +164,8 @@ create_temp_root() {
 
 @test "get_container_id_by_name returns empty when no match" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy'
-  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_id_by_name "nonexistent"; echo "out:$output"'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; result=$(get_container_id_by_name "nonexistent"); [ -z "$result" ] && echo empty || echo "not empty:$result"'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"out:"* ]]
-  # output should not contain an ID
-  run bash -c 'source "$REPO_ROOT/common/functions.sh"; result=$(get_container_id_by_name "nonexistent"); [ -z "$result" ] && echo empty'
   [ "$output" = "empty" ]
 }
 
@@ -352,7 +349,7 @@ net0: name=eth0,bridge=vmbr0,ip=10.0.0.99/24,ip=10.0.0.99"
   export MOCK_PCT_CONFIG="hostname: test"
   run bash -c 'source "$REPO_ROOT/common/functions.sh"; apply_mounts 101 /tank/data/a /DATA/A /tank/data/orphan'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"odd number"* ]] || grep -q "odd number" "$MOCK_LOG" || true
+  grep -q "odd number" "$MOCK_LOG" || [[ "$output" == *"odd number"* ]]
 }
 
 @test "apply_mounts fails when pct set fails" {
@@ -373,9 +370,12 @@ net0: name=eth0,bridge=vmbr0,ip=10.0.0.99/24,ip=10.0.0.99"
   grep -q "zfs set acltype=posixacl tank/data/test" "$MOCK_LOG"
   grep -q "zfs set xattr=sa tank/data/test" "$MOCK_LOG"
   grep -q "chown -R 1000:1000 /tmp/fake" "$MOCK_LOG"
-  grep -q "setfacl" "$MOCK_LOG"
-  # ACL string should contain all UIDs
-  grep -q "100000" "$MOCK_LOG"
+  grep -q "chmod 2770 /tmp/fake" "$MOCK_LOG"
+  grep -q "setfacl -bnR /tmp/fake" "$MOCK_LOG"
+  grep -q "u:1000:rwx" "$MOCK_LOG"
+  grep -q "u:100000:rwx" "$MOCK_LOG"
+  grep -q "u:100001:rwx" "$MOCK_LOG"
+  grep -q "m::rwx" "$MOCK_LOG"
 }
 
 @test "add_dataset_acl appends ACL for UID" {

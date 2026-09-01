@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-LOG_FILE="${MOCK_LOG:-${BATS_TMPDIR:-/tmp}/python3.log}"
-/bin/mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-echo "python3 $*" >> "$LOG_FILE"
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "python3" "$@"
 
 # For qbittorrent set_password.py, return mock hash
 if [[ "$*" == *"set_password.py"* ]]; then
