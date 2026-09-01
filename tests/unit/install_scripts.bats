@@ -13,16 +13,14 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$MOCK_TMPDIR"
-  # Restore or remove .server_users
   if [ -f "$MOCK_TMPDIR/.server_users.bak" ]; then
     cp "$MOCK_TMPDIR/.server_users.bak" "$REPO_ROOT/.server_users"
   elif [ -f "$REPO_ROOT/.server_users" ]; then
-    # If we created it for test, remove if it contains test marker
     if grep -q "bats-test" "$REPO_ROOT/.server_users" 2>/dev/null || grep -q "testuser" "$REPO_ROOT/.server_users" 2>/dev/null; then
       rm -f "$REPO_ROOT/.server_users"
     fi
   fi
+  rm -rf "$MOCK_TMPDIR"
 }
 
 # -------------------------------------------------------------------

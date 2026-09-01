@@ -114,7 +114,7 @@ is_user_registered() {
         return 1
     fi
 
-    grep -Fqx "$username" "$users_file"
+    grep -Fqx -- "$username" "$users_file"
 }
 
 # Adds a username to the end of .server_users if not already registered
@@ -204,7 +204,7 @@ get_vm_id_by_name() {
     local name="$1"
     [ -z "$name" ] && return 1
     qm list 2>/dev/null | awk -v p="$name" '
-        NR>1 && tolower($2) ~ tolower(p) { print $1; exit }
+        NR>1 && index(tolower($2), tolower(p)) { print $1; exit }
     '
 }
 
@@ -304,7 +304,7 @@ get_container_id_by_name() {
     if [ -z "$name" ]; then
         return 1
     fi
-    pct list | grep -F -i "$name" | sort -n | tail -1 | awk '{print $1}'
+    pct list | grep -F -i -- "$name" | sort -n | tail -1 | awk '{print $1}'
 }
 
 # Configures ZFS ACLs for specific users and enables inheritance

@@ -12,7 +12,6 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$MOCK_TMPDIR"
   if [ -f "$MOCK_TMPDIR/.server_users.bak" ]; then
     cp "$MOCK_TMPDIR/.server_users.bak" "$REPO_ROOT/.server_users"
   elif [ -f "$REPO_ROOT/.server_users" ]; then
@@ -24,6 +23,7 @@ teardown() {
   if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ] && grep -q "bats-test" "$REPO_ROOT/caddy/Caddyfile.local" 2>/dev/null; then
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
   fi
+  rm -rf "$MOCK_TMPDIR"
 }
 
 # -------------------------------------------------------------------
