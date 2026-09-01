@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "python3" "$@"
+
+# If MOCK_PYTHON_OUTPUT is set (even empty), use it (for testing failure)
+if [ "${MOCK_PYTHON_OUTPUT+set}" = "set" ]; then
+  echo "$MOCK_PYTHON_OUTPUT"
+  exit 0
+fi
+
+# For qbittorrent set_password.py, return mock password and hash
+if [[ "$*" == *"set_password.py"* ]]; then
+  echo "mockpass mock_hash_abc123"
+  exit 0
+fi
+
+# delegate to real python3 if exists
+if command -v /opt/homebrew/bin/python3 >/dev/null 2>&1; then
+  /opt/homebrew/bin/python3 "$@" 2>&1 || echo "mock_hash"
+elif command -v /usr/bin/python3 >/dev/null 2>&1; then
+  /usr/bin/python3 "$@" 2>&1 || echo "mock_hash"
+else
+  echo "mock_hash"
+fi

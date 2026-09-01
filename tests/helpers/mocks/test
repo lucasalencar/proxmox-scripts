@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "test" "$@"
+
+# Handle -t check for qbittorrent install
+# [ -t 0 ] checks if stdin is a tty. For bats tests with </dev/null, it should be false.
+# Mock to return 1 (not a tty) when MOCK_TEST_TTY is not set, or when called with -t
+if [[ "$1" == "-t" ]]; then
+  # If MOCK_TEST_TTY is set, use it, otherwise return 1 (not a tty) for hermetic tests
+  if [ -n "${MOCK_TEST_TTY:-}" ]; then
+    if [ "$MOCK_TEST_TTY" = "1" ]; then
+      exit 0
+    else
+      exit 1
+    fi
+  fi
+  # Default: not a tty (so qbittorrent test with </dev/null will correctly go to else branch)
+  exit 1
+fi
+
+# For other test invocations (e.g., test -d, test -f), delegate to real test
+if command -v /usr/bin/test >/dev/null 2>&1; then
+  /usr/bin/test "$@"
+  exit $?
+else
+  /bin/test "$@"
+  exit $?
+fi

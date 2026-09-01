@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Mock for zfs
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "zfs" "$@"
+
+cmd="${1:-}"
+case "$cmd" in
+  list)
+    dataset="${2:-}"
+    if [ "${MOCK_ZFS_LIST_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    # If specific dataset check fails, exit 1 to simulate not exists
+    if [ -n "${MOCK_ZFS_LIST_NOT_EXISTS:-}" ]; then
+      exit 1
+    fi
+    # Default: succeed and output something
+    echo "NAME       USED  AVAIL  REFER  MOUNTPOINT"
+    echo "$dataset   1G    10G    100M   /$dataset"
+    ;;
+  create|set|mount)
+    if [ "${MOCK_ZFS_FAIL:-0}" = "1" ]; then
+      echo "mock zfs $cmd failed" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  get)
+    if [ -n "${MOCK_ZFS_GET_OUTPUT:-}" ]; then
+      echo -e "$MOCK_ZFS_GET_OUTPUT"
+    else
+      echo "NAME    PROPERTY    VALUE    SOURCE"
+      echo "tank/data  recordsize  1M  local"
+    fi
+    ;;
+  *)
+    exit 0
+    ;;
+esac

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "realpath" "$@"
+
+# If MOCK_REALPATH is set, use it
+if [ -n "${MOCK_REALPATH:-}" ]; then
+  echo "$MOCK_REALPATH"
+  exit 0
+fi
+
+# Handle -m etc: just return last arg as path
+# For -m, realpath -m /path returns canonical path; we can delegate to real realpath if exists
+if command -v /bin/realpath >/dev/null 2>&1; then
+  /bin/realpath "$@" 2>/dev/null || echo "${!#}"
+  exit 0
+fi
+# fallback: echo last arg
+echo "${!#}"

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "sleep" "$@"
+exit 0

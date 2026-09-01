@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "mkdir" "$@"
+# Actually create directory if it's under temp dirs, otherwise just succeed (avoid creating real /tank)
+for arg in "$@"; do
+  if [[ "$arg" == -* ]]; then continue; fi
+  if [[ "$arg" == /tmp/* ]] || [[ "$arg" == /var/* ]] || [[ "$arg" == "$MOCK_TMPDIR"* ]] || [[ "$arg" == /private/tmp/* ]] || [[ "$arg" == /private/var/* ]]; then
+    /bin/mkdir -p "$arg" 2>/dev/null || true
+  fi
+done
+exit 0

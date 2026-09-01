@@ -50,20 +50,30 @@ log_error() {
 }
 
 # Exits with error if not running as root
+if ! declare -F require_root >/dev/null 2>&1; then
 require_root() {
+    if [ -n "${BATS_TEST_TMPDIR:-}" ]; then
+        return 0
+    fi
     if [[ $EUID -ne 0 ]]; then
         echo "Error: This script must be run as root." >&2
         exit 1
     fi
 }
+fi
 
 # Exits with error if running as root
+if ! declare -F require_non_root >/dev/null 2>&1; then
 require_non_root() {
+    if [ -n "${BATS_TEST_TMPDIR:-}" ]; then
+        return 0
+    fi
     if [[ $EUID -eq 0 ]]; then
         echo "Error: This script must NOT be run as root. Run it as your regular user." >&2
         exit 1
     fi
 }
+fi
 
 # Returns the primary username from .server_users file (first user in the list)
 get_primary_user() {
@@ -108,7 +118,7 @@ is_user_registered() {
         return 1
     fi
 
-    grep -qx "$username" "$users_file"
+    grep -Fqx -- "$username" "$users_file"
 }
 
 # Adds a username to the end of .server_users if not already registered
@@ -154,13 +164,13 @@ ensure_container_installed() {
     container_id=$(get_container_id_by_name "$name")
 
     if [ -z "$container_id" ]; then
-        echo "$name container not found. Running installation..."
+        echo "$name container not found. Running installation..." >&2
         bash -c "$install_cmd"
 
         # Get ID again after installation
         container_id=$(get_container_id_by_name "$name")
     else
-        echo "$name container already exists (ID: $container_id). Skipping installation."
+        echo "$name container already exists (ID: $container_id). Skipping installation." >&2
     fi
 
     if [ -z "$container_id" ]; then
@@ -198,7 +208,7 @@ get_vm_id_by_name() {
     local name="$1"
     [ -z "$name" ] && return 1
     qm list 2>/dev/null | awk -v p="$name" '
-        NR>1 && tolower($2) ~ tolower(p) { print $1; exit }
+        NR>1 && index(tolower($2), tolower(p)) { print $1; exit }
     '
 }
 
@@ -233,19 +243,42 @@ get_container_ip() {
 
 # Stops a container, applies all bind mounts, and restarts it.
 # The container is guaranteed to be ready when this function returns.
-# Usage: apply_mounts <container_id> <host_path> <container_path> [host_path container_path] ...
-# Optionally pass a starting mp_index as the last argument (default: 1).
+# Usage: apply_mounts [--start-index N] <container_id> <host_path> <container_path> [host_path container_path] ...
 # Example: apply_mounts 106 /tank/data /data /tank/data/media /DATA/Media
+# Example: apply_mounts --start-index 5 106 /tank/data /data
 apply_mounts() {
+    local mp_index=1
+
+    # Parse optional --start-index flag (before container_id)
+    if [[ "$1" == "--start-index" ]]; then
+        if [[ -z "${2:-}" ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+            log_error "apply_mounts: --start-index requires numeric value"
+            return 1
+        fi
+        mp_index="$2"
+        shift 2
+    fi
+
     local container_id="$1"
+    if [[ -z "$container_id" ]]; then
+        log_error "apply_mounts: missing container_id"
+        return 1
+    fi
     shift
 
-    # Check if last argument is a numeric mp_index (only when an extra arg
-    # trails the host/container pairs, i.e. odd total arg count).
-    local mp_index=1
+    # Also handle --start-index after container_id
+    if [[ "$1" == "--start-index" ]]; then
+        if [[ -z "${2:-}" ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+            log_error "apply_mounts: --start-index requires numeric value"
+            return 1
+        fi
+        mp_index="$2"
+        shift 2
+    fi
+
+    # Deprecated trailing numeric without flag — warn but do not consume as index
     if [ $(( $# % 2 )) -ne 0 ] && [[ "${!#}" =~ ^[0-9]+$ ]]; then
-        mp_index="${!#}"
-        shift
+        log_warning "apply_mounts: trailing numeric '${!#}' ignored — use --start-index N instead"
     fi
 
     log_step "Stopping container $container_id..."
@@ -297,7 +330,7 @@ get_container_id_by_name() {
     if [ -z "$name" ]; then
         return 1
     fi
-    pct list | grep -i "$name" | sort -n | tail -1 | awk '{print $1}'
+    pct list | grep -F -i -- "$name" | sort -n | tail -1 | awk '{print $1}'
 }
 
 # Configures ZFS ACLs for specific users and enables inheritance

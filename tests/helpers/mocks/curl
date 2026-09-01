@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "curl" "$@"
+# Return empty script that does nothing, to avoid network
+echo 'echo "mock curl install script executed"'
+exit 0

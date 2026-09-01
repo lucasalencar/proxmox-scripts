@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Mock for Proxmox qm command
+set -euo pipefail
+
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "qm" "$@"
+
+cmd="${1:-}"
+
+case "$cmd" in
+  list)
+    if [ -n "${MOCK_QM_LIST+set}" ]; then
+      if [ -n "$MOCK_QM_LIST" ]; then
+        echo -e "$MOCK_QM_LIST"
+      else
+        echo "VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID"
+      fi
+    elif [ -n "${MOCK_QM_LIST_FILE:-}" ] && [ -f "$MOCK_QM_LIST_FILE" ]; then
+      cat "$MOCK_QM_LIST_FILE"
+    else
+      cat <<'EOF'
+VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID
+200  home-assistant       running    4096              32.00 12345
+EOF
+    fi
+    ;;
+  config)
+    vmid="${2:-}"
+    varname="MOCK_QM_CONFIG_${vmid}"
+    val="${!varname:-}"
+    if [ -n "$val" ]; then
+      echo -e "$val"
+    elif [ -n "${MOCK_QM_CONFIG:-}" ]; then
+      echo -e "$MOCK_QM_CONFIG"
+    else
+      cat <<EOF
+name: test-vm
+cores: 2
+memory: 2048
+ipconfig0: ip=10.0.0.10/24,gw=10.0.0.1
+EOF
+    fi
+    ;;
+  status)
+    if [ -n "${MOCK_QM_STATUS:-}" ]; then
+      echo -e "$MOCK_QM_STATUS"
+    else
+      echo "status: running"
+    fi
+    ;;
+  guest)
+    # qm guest exec <vmid> -- <cmd>
+    sub="${2:-}"
+    if [ "$sub" = "exec" ]; then
+      if [ -n "${MOCK_QM_GUEST_EXEC_OUTPUT:-}" ]; then
+        echo -e "$MOCK_QM_GUEST_EXEC_OUTPUT"
+      elif [[ "$*" == *"hostname -I"* ]]; then
+        if [ -n "${MOCK_QM_GUEST_HOSTNAME_I:-}" ]; then
+          echo "{\"out-data\": \"${MOCK_QM_GUEST_HOSTNAME_I}\", \"exitcode\": 0}"
+        else
+          echo '{"out-data": "10.0.0.10\n", "exitcode": 0}'
+        fi
+      else
+        echo '{"out-data": "", "exitcode": 0}'
+      fi
+      if [ "${MOCK_QM_GUEST_FAIL:-0}" = "1" ]; then
+        exit 1
+      fi
+      exit 0
+    fi
+    ;;
+  *)
+    if [ "${MOCK_QM_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
