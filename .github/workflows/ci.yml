@@ -26,7 +26,7 @@ jobs:
           shellcheck --version
 
       - name: Run bats unit tests
-        run: make test
+        run: make test-verbose
 
       - name: Run shellcheck
         run: make lint
