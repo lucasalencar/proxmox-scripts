@@ -123,8 +123,10 @@ teardown() {
 
 @test "starr container provision.sh fetches Servarr via update server (no GitHub jq pattern)" {
   /usr/bin/grep -q "servarr.com/v1/update" "$REPO_ROOT/starr/container/provision.sh"
-  /usr/bin/grep -q "Prowlarr" "$REPO_ROOT/starr/container/provision.sh"
-  /usr/bin/grep -q "systemctl enable --now prowlarr" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q 'install_servarr_app "Prowlarr"' "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q 'install_servarr_app "Sonarr"' "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q 'install_servarr_app "Radarr"' "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q 'systemctl enable --now "$service"' "$REPO_ROOT/starr/container/provision.sh"
   # Servarr path must not use GitHub API asset matching
   ! /usr/bin/grep -q "assets\[\]" "$REPO_ROOT/starr/container/provision.sh"
   run bash -n "$REPO_ROOT/starr/container/provision.sh"

@@ -117,18 +117,28 @@ fetch_bazarr() {
     log "  Deployed bazarr to $target"
 }
 
-# Prowlarr
-if [ ! -f /etc/systemd/system/prowlarr.service ]; then
-    fetch_servarr "Prowlarr" "https://prowlarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=${SERVARR_ARCH}" "/opt/Prowlarr" "/var/lib/prowlarr"
-    cat >/etc/systemd/system/prowlarr.service <<EOF
+# Install a Servarr app idempotently: fetch tarball, write systemd unit, enable + start
+# Usage: install_servarr_app <App> <service> <dl_url> <target> <data_dir> <exec_start> [umask]
+install_servarr_app() {
+    local app="$1" service="$2" dl_url="$3" target="$4" data_dir="$5" exec_start="$6" umask="${7:-}"
+    local unit="/etc/systemd/system/${service}.service"
+
+    if [ -f "$unit" ]; then
+        log "$app already installed — skipping"
+        return 0
+    fi
+    fetch_servarr "$app" "$dl_url" "$target" "$data_dir"
+    local umask_line=""
+    [ -n "$umask" ] && umask_line="UMask=${umask}"
+    cat >"$unit" <<EOF
 [Unit]
-Description=Prowlarr Daemon
+Description=${app} Daemon
 After=syslog.target network.target
 
 [Service]
-UMask=0002
+${umask_line}
 Type=simple
-ExecStart=/opt/Prowlarr/Prowlarr -nobrowser -data=/var/lib/prowlarr/
+ExecStart=${exec_start}
 TimeoutStopSec=20
 KillMode=process
 Restart=on-failure
@@ -137,66 +147,14 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable --now prowlarr
-    log "Prowlarr installed and started"
-else
-    log "Prowlarr already installed — skipping"
-fi
+    systemctl enable --now "$service"
+    log "$app installed and started"
+}
 
-# Sonarr
-if [ ! -f /etc/systemd/system/sonarr.service ]; then
-    fetch_servarr "Sonarr" "https://services.sonarr.tv/v1/download/main/latest?version=4&os=linux&arch=${SERVARR_ARCH}" "/opt/Sonarr" "/var/lib/sonarr"
-    mkdir -p /var/lib/sonarr
-    chmod 775 /var/lib/sonarr
-    cat >/etc/systemd/system/sonarr.service <<EOF
-[Unit]
-Description=Sonarr Daemon
-After=syslog.target network.target
-
-[Service]
-Type=simple
-ExecStart=/opt/Sonarr/Sonarr -nobrowser -data=/var/lib/sonarr/
-TimeoutStopSec=20
-KillMode=process
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable --now sonarr
-    log "Sonarr installed and started"
-else
-    log "Sonarr already installed — skipping"
-fi
-
-# Radarr
-if [ ! -f /etc/systemd/system/radarr.service ]; then
-    fetch_servarr "Radarr" "https://radarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=${SERVARR_ARCH}" "/opt/Radarr" "/var/lib/radarr"
-    mkdir -p /var/lib/radarr
-    chmod 775 /var/lib/radarr /opt/Radarr
-    cat >/etc/systemd/system/radarr.service <<EOF
-[Unit]
-Description=Radarr Daemon
-After=syslog.target network.target
-
-[Service]
-UMask=0002
-Type=simple
-ExecStart=/opt/Radarr/Radarr -nobrowser -data=/var/lib/radarr/
-TimeoutStopSec=20
-KillMode=process
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable --now radarr
-    log "Radarr installed and started"
-else
-    log "Radarr already installed — skipping"
-fi
+# Prowlarr / Sonarr / Radarr share the same install shape (Bazarr below is venv-based)
+install_servarr_app "Prowlarr" "prowlarr" "https://prowlarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=${SERVARR_ARCH}" "/opt/Prowlarr" "/var/lib/prowlarr" "/opt/Prowlarr/Prowlarr -nobrowser -data=/var/lib/prowlarr/" "0002"
+install_servarr_app "Sonarr" "sonarr" "https://services.sonarr.tv/v1/download/main/latest?version=4&os=linux&arch=${SERVARR_ARCH}" "/opt/Sonarr" "/var/lib/sonarr" "/opt/Sonarr/Sonarr -nobrowser -data=/var/lib/sonarr/"
+install_servarr_app "Radarr" "radarr" "https://radarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=${SERVARR_ARCH}" "/opt/Radarr" "/var/lib/radarr" "/opt/Radarr/Radarr -nobrowser -data=/var/lib/radarr/" "0002"
 
 # Bazarr
 if [ ! -f /etc/systemd/system/bazarr.service ]; then
