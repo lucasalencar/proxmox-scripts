@@ -62,6 +62,16 @@ teardown() {
   [[ "$output" == *"reusing"* ]] || [[ "$output" == *"Found existing"* ]]
 }
 
+@test "starr install fails when service UID cannot be resolved" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+  export MOCK_PCT_CONFIG="hostname: starr"
+  export MOCK_PCT_EXEC_ID_U_prowlarr=""
+
+  run bash "$REPO_ROOT/starr/install.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Could not determine UID"* ]]
+}
+
 @test "starr install fails when provision push fails" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
   export MOCK_PCT_CONFIG="hostname: starr"

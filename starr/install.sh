@@ -64,22 +64,13 @@ log_success "Starr apps installed inside container $container_id"
 # --- 5. ACLs for each service user ---
 log_step "Configuring ACLs for Starr service users..."
 for svc in prowlarr sonarr radarr bazarr; do
-    # Bazarr may run as root/bazarr depending on service; try both
     host_uid=$(get_host_uid "$container_id" "$svc" 2>/dev/null)
     if [ -z "$host_uid" ]; then
-        # Fallback: try to find UID via file ownership of /var/lib/<svc>
-        uid_in_ct=$(pct exec "$container_id" -- stat -c %u "/var/lib/$svc" 2>/dev/null || echo "")
-        if [ -n "$uid_in_ct" ] && [[ "$uid_in_ct" =~ ^[0-9]+$ ]]; then
-            host_uid=$((uid_in_ct + 100000))
-            log_info "Resolved $svc UID via /var/lib/$svc: $uid_in_ct -> host $host_uid"
-        fi
+        log_error "Could not determine UID for '$svc' inside container $container_id — aborting"
+        exit 1
     fi
-    if [ -n "$host_uid" ]; then
-        log_info "Granting UID $host_uid ($svc) access to mediaserver..."
-        add_dataset_acl "/tank/data/mediaserver" "$host_uid"
-    else
-        log_warning "Could not determine UID for $svc — ACL not set (may need manual: get_host_uid $container_id $svc)"
-    fi
+    log_info "Granting UID $host_uid ($svc) access to mediaserver..."
+    add_dataset_acl "/tank/data/mediaserver" "$host_uid"
 done
 
 # Ensure container root (100000) can traverse
