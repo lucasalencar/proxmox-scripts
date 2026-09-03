@@ -129,7 +129,7 @@ teardown() {
 @test "starr container provision and update share similar deploy logic but distinct entrypoints" {
   # Ensure they are not identical (provision does CLEAN_INSTALL without version check, update does version check)
   run bash -c 'diff -q "$REPO_ROOT/starr/container/provision.sh" "$REPO_ROOT/starr/container/update.sh" && echo same || echo diff'
-  [[ "$output" == "diff" ]]
+  [[ "$output" == *"diff"* ]]
   /usr/bin/grep -q "update_app" "$REPO_ROOT/starr/container/update.sh"
   ! /usr/bin/grep -q "update_app" "$REPO_ROOT/starr/container/provision.sh"
 }
