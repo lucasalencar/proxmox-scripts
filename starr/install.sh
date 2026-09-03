@@ -11,7 +11,12 @@ log_step "Starting Starr stack installation (Prowlarr + Sonarr + Radarr + Bazarr
 container_id=$(get_container_id_by_name "starr")
 
 if [ -z "$container_id" ]; then
-    log_step "Container 'starr' not found — creating new Debian 13 LXC (4 cores / 4096 MB / 20GB)..."
+    # Single CT runs 4 apps — resources are shared
+    CT_CORES=4
+    CT_MEMORY=4096
+    CT_DISK=20
+    CT_SWAP=512
+    log_step "Container 'starr' not found — creating new Debian 13 LXC (${CT_CORES} cores / ${CT_MEMORY} MB / ${CT_DISK}GB)..."
 
     CTID=$(get_pve_next_id) || exit 1
     log_info "Using CTID: $CTID"
@@ -26,7 +31,7 @@ if [ -z "$container_id" ]; then
     TEMPLATE=$(ensure_debian_template "13" "$TEMPLATE_STORAGE") || exit 1
     TEMPLATE_FILE=$(basename "$TEMPLATE")
 
-    if ! create_lxc_container "$CTID" "starr" "$TEMPLATE_STORAGE" "$TEMPLATE_FILE" "$ROOTFS_STORAGE" "$BRIDGE" 4 4096 20 512 "starr,arr,media" "Starr single CT: Prowlarr (9696), Sonarr (8989), Radarr (7878), Bazarr (6767). Managed by proxmox-scripts/starr."; then
+    if ! create_lxc_container "$CTID" "starr" "$TEMPLATE_STORAGE" "$TEMPLATE_FILE" "$ROOTFS_STORAGE" "$BRIDGE" "$CT_CORES" "$CT_MEMORY" "$CT_DISK" "$CT_SWAP" "starr,arr,media" "Starr single CT: Prowlarr (9696), Sonarr (8989), Radarr (7878), Bazarr (6767). Managed by proxmox-scripts/starr."; then
         log_error "Failed to create starr LXC"
         exit 1
     fi
