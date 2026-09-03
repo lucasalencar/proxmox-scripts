@@ -118,7 +118,6 @@ if [ -n "$container_ip" ]; then
     log_info "     Sonarr -> Category 'series' -> /data/downloads/series"
     log_info "     Radarr -> Category 'movies' -> /data/downloads/movies"
     log_info "  3. In Sonarr/Radarr: Settings -> Media Management -> Root Folder = /data/media/{Series,Movies}"
-    log_info "     Hardlinks work because /data is single ZFS dataset"
     log_info "  4. In Prowlarr: Settings -> Apps -> Add Sonarr/Radarr (use http://localhost:8989 / 7878 inside CT)"
     log_info "  5. Follow https://trash-guides.info/Radarr/Radarr-Quality-Settings-File-Size/ and"
     log_info "     https://trash-guides.info/Sonarr/Sonarr-Quality-Settings-File-Size/"
