@@ -7,94 +7,119 @@ log() { echo "[starr-install] $*"; }
 log "Updating OS and installing base dependencies..."
 apt update
 apt upgrade -y
-apt install -y curl sqlite3 libicu-dev jq unzip ca-certificates gnupg python3 python3-venv python3-pip libssl-dev
+apt install -y curl sqlite3 libicu-dev unzip ca-certificates gnupg python3 python3-venv python3-pip libssl-dev
 
-# Detect arch for Servarr assets
+# Detect arch for Servarr download URLs (same mapping as upstream install scripts)
 ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 case "$ARCH" in
     amd64|x86_64) SERVARR_ARCH="x64" ;;
     arm64|aarch64) SERVARR_ARCH="arm64" ;;
-    *) SERVARR_ARCH="x64"; log "Unknown arch $ARCH, defaulting to x64" ;;
+    armhf|armv7l|armv6l|arm) SERVARR_ARCH="arm" ;;
+    *) log "ERROR: unsupported arch $ARCH"; exit 1 ;;
 esac
 log "Detected arch: $ARCH -> Servarr arch: $SERVARR_ARCH"
 
-# Helper: fetch latest release asset from GitHub and deploy to /opt/<app>
-fetch_and_deploy() {
+# Symlink system SQLite when glibc is too old for the bundled one (borrowed from upstream)
+ensure_sqlite_compat() {
+    local target="$1"
+    local glibc_version glibc_major glibc_minor
+    glibc_version=$(ldd --version 2>/dev/null | awk '/ldd/{print $NF}' | head -1)
+    glibc_major=$(echo "$glibc_version" | cut -d. -f1)
+    glibc_minor=$(echo "$glibc_version" | cut -d. -f2)
+    if [ -n "$glibc_major" ] && { [ "$glibc_major" -lt 2 ] || { [ "$glibc_major" -eq 2 ] && [ "${glibc_minor:-0}" -lt 38 ]; }; }; then
+        log "  glibc $glibc_version < 2.38, linking system SQLite..."
+        mv "$target/libe_sqlite3.so" "$target/libe_sqlite3.so.backup" 2>/dev/null || true
+        local system_sqlite="/usr/lib/x86_64-linux-gnu/libsqlite3.so.0"
+        case "$ARCH" in
+            arm64|aarch64) system_sqlite="/usr/lib/aarch64-linux-gnu/libsqlite3.so.0" ;;
+            armhf|armv7l|armv6l|arm) system_sqlite="/usr/lib/arm-linux-gnueabihf/libsqlite3.so.0" ;;
+        esac
+        if [ -f "$system_sqlite" ]; then
+            ln -s "$system_sqlite" "$target/libe_sqlite3.so"
+        else
+            log "  WARNING: system SQLite not found at $system_sqlite"
+        fi
+    fi
+}
+
+# Fetch a Servarr app tarball from its official update server and deploy to /opt/<app>
+# Usage: fetch_servarr <AppName> <download_url> <target> <data_dir>
+fetch_servarr() {
     local app_name="$1"      # e.g. Prowlarr
-    local repo="$2"          # e.g. Prowlarr/Prowlarr
+    local dl_url="$2"        # e.g. https://prowlarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=x64
     local target="$3"        # e.g. /opt/Prowlarr
-    local pattern="$4"       # e.g. Prowlarr.master*linux-core-x64.tar.gz
-    local data_dir="$5"      # e.g. /var/lib/prowlarr (optional)
+    local data_dir="$4"      # e.g. /var/lib/prowlarr
 
-    log "Fetching $app_name from $repo (pattern: $pattern)..."
-    local api_url="https://api.github.com/repos/${repo}/releases/latest"
-    local json=$(curl -fsSL -H "Accept: application/vnd.github+json" "$api_url")
-    local tag=$(echo "$json" | jq -r ".tag_name // empty")
-    if [ -z "$tag" ]; then
-        log "ERROR: Could not get tag for $repo"
-        return 1
-    fi
-    log "  Latest tag: $tag"
-
-    local asset_url=$(echo "$json" | jq -r --arg pat "$pattern" '.assets[] | select(.name | test($pat)) | .browser_download_url' | head -1)
-    # Fallback: try glob match with case
-    if [ -z "$asset_url" ] || [ "$asset_url" = "null" ]; then
-        # Try alternative: list names and case-match
-        local avail=$(echo "$json" | jq -r ".assets[].name" | tr "\n" " ")
-        log "  No asset matched pattern $pattern. Available: $avail"
-        # Try without arch suffix for debugging
-        asset_url=$(echo "$json" | jq -r ".assets[].browser_download_url" | head -1)
-    fi
-    if [ -z "$asset_url" ] || [ "$asset_url" = "null" ]; then
-        log "ERROR: No asset found for $app_name"
-        return 1
-    fi
-    log "  Asset URL: $asset_url"
+    log "Fetching $app_name..."
+    log "  URL: $dl_url"
 
     local tmpdir=$(mktemp -d)
-    local archive="$tmpdir/archive"
-    curl -fsSL -o "$archive" "$asset_url"
+    local archive="$tmpdir/archive.tar.gz"
+    curl -fsSL -o "$archive" "$dl_url"
 
     mkdir -p "$target"
-    # Clear target if exists (preserve mount points - none here)
     if [ -d "$target" ] && [ "$(ls -A "$target" 2>/dev/null)" ]; then
         log "  Clearing $target (CLEAN_INSTALL)"
         find "$target" -mindepth 1 -delete 2>/dev/null || rm -rf "${target:?}/"* 2>/dev/null || true
     fi
 
-    local filename=$(basename "$asset_url")
     mkdir -p "$tmpdir/extract"
-    if [[ "$filename" == *.zip ]]; then
-        unzip -q "$archive" -d "$tmpdir/extract"
-        # bazarr.zip contains files directly or in subdir
-        if [ $(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | wc -l) -eq 1 ] && [ -d "$(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | head -1)" ]; then
-            cp -r "$(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | head -1)"/* "$target/"
-        else
-            cp -r "$tmpdir/extract"/* "$target/"
-        fi
+    tar --no-same-owner -xzf "$archive" -C "$tmpdir/extract" 2>/dev/null || tar --no-same-owner -xf "$archive" -C "$tmpdir/extract"
+    local top=$(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | head -1)
+    if [ -d "$top" ] && [ $(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | wc -l) -eq 1 ]; then
+        cp -r "$top"/* "$target/"
     else
-        tar --no-same-owner -xzf "$archive" -C "$tmpdir/extract" 2>/dev/null || tar --no-same-owner -xf "$archive" -C "$tmpdir/extract"
-        local top=$(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | head -1)
-        if [ -d "$top" ] && [ $(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | wc -l) -eq 1 ]; then
-            cp -r "$top"/* "$target/"
-        else
-            cp -r "$tmpdir/extract"/* "$target/"
-        fi
+        cp -r "$tmpdir/extract"/* "$target/"
     fi
     chmod 775 "$target"
     rm -rf "$tmpdir"
 
-    if [ -n "$data_dir" ]; then
-        mkdir -p "$data_dir"
-        chmod 775 "$data_dir" "$target"
+    ensure_sqlite_compat "$target"
+
+    mkdir -p "$data_dir"
+    chmod 775 "$data_dir" "$target"
+    # Let the app self-update on first start in case the tarball is stale
+    touch "$data_dir/update_required"
+    log "  Deployed $app_name to $target"
+}
+
+# Fetch Bazarr zip from its latest GitHub release and deploy to /opt/bazarr
+fetch_bazarr() {
+    local target="$1"        # e.g. /opt/bazarr
+    local data_dir="$2"      # e.g. /var/lib/bazarr
+    local dl_url="https://github.com/morpheus65535/bazarr/releases/latest/download/bazarr.zip"
+
+    log "Fetching bazarr..."
+    log "  URL: $dl_url"
+
+    local tmpdir=$(mktemp -d)
+    local archive="$tmpdir/archive.zip"
+    curl -fsSL -o "$archive" "$dl_url"
+
+    mkdir -p "$target"
+    if [ -d "$target" ] && [ "$(ls -A "$target" 2>/dev/null)" ]; then
+        log "  Clearing $target (CLEAN_INSTALL)"
+        find "$target" -mindepth 1 -delete 2>/dev/null || rm -rf "${target:?}/"* 2>/dev/null || true
     fi
-    echo "$tag" > "$HOME/.$(echo "$app_name" | tr "[:upper:]" "[:lower:]")"
-    log "  Deployed $app_name $tag to $target"
+
+    mkdir -p "$tmpdir/extract"
+    unzip -q "$archive" -d "$tmpdir/extract"
+    if [ $(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | wc -l) -eq 1 ] && [ -d "$(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | head -1)" ]; then
+        cp -r "$(find "$tmpdir/extract" -mindepth 1 -maxdepth 1 | head -1)"/* "$target/"
+    else
+        cp -r "$tmpdir/extract"/* "$target/"
+    fi
+    chmod 775 "$target"
+    rm -rf "$tmpdir"
+
+    mkdir -p "$data_dir"
+    chmod 775 "$data_dir" "$target"
+    log "  Deployed bazarr to $target"
 }
 
 # Prowlarr
 if [ ! -f /etc/systemd/system/prowlarr.service ]; then
-    fetch_and_deploy "Prowlarr" "Prowlarr/Prowlarr" "/opt/Prowlarr" "Prowlarr.master.*linux-core-${SERVARR_ARCH}.tar.gz" "/var/lib/prowlarr"
+    fetch_servarr "Prowlarr" "https://prowlarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=${SERVARR_ARCH}" "/opt/Prowlarr" "/var/lib/prowlarr"
     cat >/etc/systemd/system/prowlarr.service <<EOF
 [Unit]
 Description=Prowlarr Daemon
@@ -120,7 +145,7 @@ fi
 
 # Sonarr
 if [ ! -f /etc/systemd/system/sonarr.service ]; then
-    fetch_and_deploy "Sonarr" "Sonarr/Sonarr" "/opt/Sonarr" "Sonarr.main.*.linux-${SERVARR_ARCH}.tar.gz" "/var/lib/sonarr"
+    fetch_servarr "Sonarr" "https://services.sonarr.tv/v1/download/main/latest?version=4&os=linux&arch=${SERVARR_ARCH}" "/opt/Sonarr" "/var/lib/sonarr"
     mkdir -p /var/lib/sonarr
     chmod 775 /var/lib/sonarr
     cat >/etc/systemd/system/sonarr.service <<EOF
@@ -147,7 +172,7 @@ fi
 
 # Radarr
 if [ ! -f /etc/systemd/system/radarr.service ]; then
-    fetch_and_deploy "Radarr" "Radarr/Radarr" "/opt/Radarr" "Radarr.master.*linux-core-${SERVARR_ARCH}.tar.gz" "/var/lib/radarr"
+    fetch_servarr "Radarr" "https://radarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=${SERVARR_ARCH}" "/opt/Radarr" "/var/lib/radarr"
     mkdir -p /var/lib/radarr
     chmod 775 /var/lib/radarr /opt/Radarr
     cat >/etc/systemd/system/radarr.service <<EOF
@@ -175,7 +200,7 @@ fi
 
 # Bazarr
 if [ ! -f /etc/systemd/system/bazarr.service ]; then
-    fetch_and_deploy "bazarr" "morpheus65535/bazarr" "/opt/bazarr" "bazarr.zip" "/var/lib/bazarr"
+    fetch_bazarr "/opt/bazarr" "/var/lib/bazarr"
     mkdir -p /var/lib/bazarr
     chmod 775 /opt/bazarr /var/lib/bazarr
     # Remove problematic Pillow flag if present

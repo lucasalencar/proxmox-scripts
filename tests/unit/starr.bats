@@ -111,25 +111,30 @@ teardown() {
 # starr/container scripts — isolated unit (no pct)
 # -------------------------------------------------------------------
 
-@test "starr container provision.sh contains fetch_and_deploy and is shellcheck clean" {
-  /usr/bin/grep -q "fetch_and_deploy()" "$REPO_ROOT/starr/container/provision.sh"
+@test "starr container provision.sh fetches Servarr via update server (no GitHub jq pattern)" {
+  /usr/bin/grep -q "servarr.com/v1/update" "$REPO_ROOT/starr/container/provision.sh"
   /usr/bin/grep -q "Prowlarr" "$REPO_ROOT/starr/container/provision.sh"
   /usr/bin/grep -q "systemctl enable --now prowlarr" "$REPO_ROOT/starr/container/provision.sh"
+  # Servarr path must not use GitHub API asset matching
+  ! /usr/bin/grep -q "assets\[\]" "$REPO_ROOT/starr/container/provision.sh"
   run bash -n "$REPO_ROOT/starr/container/provision.sh"
   [ "$status" -eq 0 ]
 }
 
-@test "starr container update.sh contains update_app and is shellcheck clean" {
-  /usr/bin/grep -q "update_app()" "$REPO_ROOT/starr/container/update.sh"
+@test "starr container update.sh delegates to self-update via update_required" {
+  /usr/bin/grep -q "update_required" "$REPO_ROOT/starr/container/update.sh"
   /usr/bin/grep -q "Prowlarr" "$REPO_ROOT/starr/container/update.sh"
+  # No tarball re-download in update path
+  ! /usr/bin/grep -q "api.github.com" "$REPO_ROOT/starr/container/update.sh"
+  ! /usr/bin/grep -q "assets\[\]" "$REPO_ROOT/starr/container/update.sh"
   run bash -n "$REPO_ROOT/starr/container/update.sh"
   [ "$status" -eq 0 ]
 }
 
 @test "starr container provision and update share similar deploy logic but distinct entrypoints" {
-  # Ensure they are not identical (provision does CLEAN_INSTALL without version check, update does version check)
+  # Ensure they are not identical (provision deploys tarballs, update touches update_required)
   run bash -c 'diff -q "$REPO_ROOT/starr/container/provision.sh" "$REPO_ROOT/starr/container/update.sh" && echo same || echo diff'
   [[ "$output" == *"diff"* ]]
-  /usr/bin/grep -q "update_app" "$REPO_ROOT/starr/container/update.sh"
-  ! /usr/bin/grep -q "update_app" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q "update_required" "$REPO_ROOT/starr/container/update.sh"
+  /usr/bin/grep -q "servarr.com/v1/update" "$REPO_ROOT/starr/container/provision.sh"
 }
