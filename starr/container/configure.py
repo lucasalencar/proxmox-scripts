@@ -67,20 +67,25 @@ class ApiError(Exception):
 
 
 def api_request(method: str, base: str, header_name: str, header_value: str,
-                path: str, body: Optional[Dict[str, Any]] = None) -> Any:
+                path: str, body: Optional[Dict[str, Any]] = None,
+                form: bool = False) -> Any:
     url = base + path
-    data = json.dumps(body).encode() if body is not None else None
+    data = None
+    if body is not None:
+        data = (urllib.parse.urlencode(body).encode() if form
+                else json.dumps(body).encode())
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header(header_name, header_value)
     if data is not None:
-        req.add_header("Content-Type", "application/json")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded" if form
+                       else "application/json")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             payload = resp.read().decode()
             return json.loads(payload) if payload.strip() else None
     except urllib.error.HTTPError as exc:
         raise ApiError(exc.code, exc.read().decode(errors="replace"))
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
         raise ApiError(None, str(exc))
 
 
@@ -90,8 +95,9 @@ def servarr_request(method: str, base: str, api_key: str, path: str,
 
 
 def bazarr_request(api_key: str, method: str, path: str,
-                   body: Optional[Dict[str, Any]] = None) -> Any:
-    return api_request(method, BAZARR_BASE, "X-API-KEY", api_key, path, body)
+                   body: Optional[Dict[str, Any]] = None,
+                   form: bool = False) -> Any:
+    return api_request(method, BAZARR_BASE, "X-API-KEY", api_key, path, body, form)
 
 
 def read_api_key(data_root: str, app: str, timeout: int = 60) -> str:
@@ -324,13 +330,26 @@ def ensure_prowlarr_app(kind: str, prowlarr_key: str, target_key: str,
     log("Prowlarr application %s: %s" % (name, action))
 
 
-def check_qbit_login(host: str, port: int, username: str, password: str) -> None:
-    url = "http://%s:%d/api/v2/auth/login" % (host, port)
+def build_qbit_login_request(host: str, port: int, username: str,
+                             password: str) -> urllib.request.Request:
+    base = "http://%s:%d" % (host, port)
     data = urllib.parse.urlencode({"username": username, "password": password}).encode()
-    req = urllib.request.Request(url, data=data, method="POST")
+    req = urllib.request.Request(base + "/api/v2/auth/login", data=data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Origin", base)
+    req.add_header("Referer", base + "/")
+    return req
+
+
+def qbit_login_succeeded(status: int, body: str) -> bool:
+    return status == 204 or (status == 200 and body.strip() in ("", "Ok."))
+
+
+def check_qbit_login(host: str, port: int, username: str, password: str) -> None:
+    req = build_qbit_login_request(host, port, username, password)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            if resp.read().decode().strip() != "Ok.":
+            if not qbit_login_succeeded(resp.status, resp.read().decode()):
                 fail("qBittorrent login rejected — check --qbit-user/--qbit-pass")
     except urllib.error.HTTPError as exc:
         fail("qBittorrent login failed (HTTP %s) — check host/user/password" % exc.code)
@@ -383,29 +402,51 @@ def load_bazarr_api_key(config_path: str) -> str:
     return api_key
 
 
+def desired_bazarr_settings(sonarr_key: str, radarr_key: str) -> Dict[str, Any]:
+    return {
+        "sonarr": {"ip": LOCALHOST_IP, "port": SONARR_PORT,
+                   "base_url": "", "ssl": False, "apikey": sonarr_key},
+        "radarr": {"ip": LOCALHOST_IP, "port": RADARR_PORT,
+                   "base_url": "", "ssl": False, "apikey": radarr_key},
+        "general": {"use_sonarr": True, "use_radarr": True},
+    }
+
+
+def bazarr_settings_form(sonarr_key: str, radarr_key: str) -> Dict[str, str]:
+    desired = desired_bazarr_settings(sonarr_key, radarr_key)
+    return {
+        "settings-sonarr-ip": desired["sonarr"]["ip"],
+        "settings-sonarr-port": str(desired["sonarr"]["port"]),
+        "settings-sonarr-base_url": desired["sonarr"]["base_url"],
+        "settings-sonarr-ssl": "false",
+        "settings-sonarr-apikey": desired["sonarr"]["apikey"],
+        "settings-radarr-ip": desired["radarr"]["ip"],
+        "settings-radarr-port": str(desired["radarr"]["port"]),
+        "settings-radarr-base_url": desired["radarr"]["base_url"],
+        "settings-radarr-ssl": "false",
+        "settings-radarr-apikey": desired["radarr"]["apikey"],
+        "settings-general-use_sonarr": "true",
+        "settings-general-use_radarr": "true",
+    }
+
+
 def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str) -> bool:
+    desired = desired_bazarr_settings(sonarr_key, radarr_key)
     sonarr = settings.get("sonarr", {}) or {}
     radarr = settings.get("radarr", {}) or {}
     general = settings.get("general", {}) or {}
-    return (sonarr.get("ip") == LOCALHOST_IP
-            and sonarr.get("port") == SONARR_PORT
-            and sonarr.get("apikey") == sonarr_key
-            and radarr.get("ip") == LOCALHOST_IP
-            and radarr.get("port") == RADARR_PORT
-            and radarr.get("apikey") == radarr_key
-            and general.get("use_sonarr") is True
-            and general.get("use_radarr") is True)
+    return (all(sonarr.get(key, "") == value for key, value in desired["sonarr"].items())
+            and all(radarr.get(key, "") == value for key, value in desired["radarr"].items())
+            and all(general.get(key) is value for key, value in desired["general"].items()))
 
 
 def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
-    patch = {
-        "sonarr": {"ip": LOCALHOST_IP, "port": SONARR_PORT, "apikey": sonarr_key},
-        "radarr": {"ip": LOCALHOST_IP, "port": RADARR_PORT, "apikey": radarr_key},
-        "general": {"use_sonarr": True, "use_radarr": True},
-    }
     try:
-        bazarr_request(api_key, "PATCH", "/api/system/settings", patch)
+        bazarr_request(api_key, "POST", "/api/system/settings",
+                       bazarr_settings_form(sonarr_key, radarr_key), form=True)
     except ApiError as exc:
+        if exc.status in (401, 403):
+            fail("Bazarr settings update rejected with HTTP %s; check its API key" % exc.status)
         log("Bazarr API update failed (%s) — falling back to config file" % exc)
         return False
     return wait_for_bazarr_link(api_key, sonarr_key, radarr_key)
@@ -419,10 +460,12 @@ def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> N
     for current, line in iter_yaml_sections(lines):
         key_match = re.match(r"^(\s+)([\w-]+):", line)
         if key_match and current in ("sonarr", "radarr") and key_match.group(2) in (
-                "ip", "port", "apikey"):
+                "ip", "port", "base_url", "ssl", "apikey"):
             values = {
                 "ip": LOCALHOST_IP,
                 "port": str(SONARR_PORT if current == "sonarr" else RADARR_PORT),
+                "base_url": "''",
+                "ssl": "False",
                 "apikey": "'%s'" % (sonarr_key if current == "sonarr" else radarr_key),
             }
             out.append("%s%s: %s\n" % (key_match.group(1), key_match.group(2),
@@ -435,8 +478,10 @@ def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> N
         out.append(line)
 
     missing = {
-        "sonarr": {"ip": LOCALHOST_IP, "port": str(SONARR_PORT), "apikey": "'%s'" % sonarr_key},
-        "radarr": {"ip": LOCALHOST_IP, "port": str(RADARR_PORT), "apikey": "'%s'" % radarr_key},
+        "sonarr": {"ip": LOCALHOST_IP, "port": str(SONARR_PORT),
+                   "base_url": "''", "ssl": "False", "apikey": "'%s'" % sonarr_key},
+        "radarr": {"ip": LOCALHOST_IP, "port": str(RADARR_PORT),
+                   "base_url": "''", "ssl": "False", "apikey": "'%s'" % radarr_key},
         "general": {"use_sonarr": "True", "use_radarr": "True"},
     }
     for section, entries in missing.items():
@@ -508,6 +553,9 @@ def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
         try:
             return bazarr_request(api_key, "GET", "/api/system/settings") or {}
         except ApiError as exc:
+            if exc.status in (401, 403, 404):
+                fail("Bazarr settings request failed with HTTP %s; check its API key and endpoint"
+                     % exc.status)
             last = exc
             time.sleep(2)
     fail("Bazarr API was not ready after %ds: %s" % (timeout, last))
@@ -521,8 +569,10 @@ def wait_for_bazarr_link(api_key: str, sonarr_key: str, radarr_key: str,
             settings = bazarr_request(api_key, "GET", "/api/system/settings") or {}
             if is_bazarr_linked(settings, sonarr_key, radarr_key):
                 return True
-        except ApiError:
-            pass
+        except ApiError as exc:
+            if exc.status in (401, 403, 404):
+                fail("Bazarr verification failed with HTTP %s; check its API key and endpoint"
+                     % exc.status)
         time.sleep(2)
     return False
 
@@ -610,12 +660,21 @@ def self_test() -> int:
     cmap = fields_map(sonarr_client)
     check("client host override", cmap["host"] == "192.168.31.86")
     check("client port override", cmap["port"] == 8090)
+    check("client credentials", cmap["username"] == "admin" and cmap["password"] == "pw")
+    check("client SSL disabled", cmap["useSsl"] is False)
     check("client tv category", cmap.get("tvCategory") == SONARR_CATEGORY)
 
     radarr_client = build_download_client("radarr", "192.168.31.86", 8090, "admin", "pw")
     rcmap = fields_map(radarr_client)
     check("client movie category", rcmap.get("movieCategory") == RADARR_CATEGORY)
     check("client movie category not schema default", rcmap.get("movieCategory") != "radarr")
+    login_request = build_qbit_login_request("192.168.31.86", 8090, "admin", "pw")
+    check("qbit login uses form content type",
+          login_request.get_header("Content-type") == "application/x-www-form-urlencoded")
+    check("qbit login sends referer", login_request.get_header("Referer") == "http://192.168.31.86:8090/")
+    check("qbit accepts current login responses",
+          qbit_login_succeeded(200, "Ok.") and qbit_login_succeeded(204, "")
+          and not qbit_login_succeeded(403, "Fails."))
 
     existing = {"id": 3, "enable": True, "fields": [{"name": "host", "value": "localhost"}]}
     merged = merge_fields(existing, sonarr_client)
@@ -666,8 +725,9 @@ def self_test() -> int:
 
     import tempfile
     sample = ("auth:\n  apikey: 'AUTHKEY' # rotated weekly\n  type: null\n"
-              "sonarr:\n  ip: 127.0.0.1\n  apikey: ''\n"
-              "radarr:\n  ip: 127.0.0.1\n  apikey: ''\n")
+              "sonarr:\n  ip: 10.0.0.2\n  port: 1\n  base_url: '/wrong'\n  ssl: True\n  apikey: ''\n"
+              "radarr:\n  ip: 10.0.0.3\n  port: 2\n  base_url: '/wrong'\n  ssl: True\n  apikey: ''\n"
+              "general:\n  use_sonarr: False\n  use_radarr: False\n")
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
         tmp.write(sample)
         tmp_path = tmp.name
@@ -677,7 +737,14 @@ def self_test() -> int:
     rewrite_bazarr_yaml(tmp_path, "SKEY", "RKEY")
     reparsed = parse_bazarr_yaml(tmp_path)
     check("yaml rewrite persists keys",
-          reparsed["sonarr"]["apikey"] == "SKEY" and reparsed["radarr"]["apikey"] == "RKEY")
+          reparsed["sonarr"]["ip"] == LOCALHOST_IP
+          and reparsed["sonarr"]["port"] == str(SONARR_PORT)
+          and reparsed["sonarr"]["base_url"] == ""
+          and reparsed["sonarr"]["ssl"] == "False"
+          and reparsed["sonarr"]["apikey"] == "SKEY"
+          and reparsed["radarr"]["apikey"] == "RKEY"
+          and reparsed["general"]["use_sonarr"] == "True"
+          and reparsed["general"]["use_radarr"] == "True")
     minimal = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
     minimal.write("auth:\n  apikey: 'AUTHKEY'\n")
     minimal.close()
@@ -690,12 +757,17 @@ def self_test() -> int:
     check("yaml quoted hash is preserved", strip_inline_comment("'secret #123' # note") == "'secret #123'")
 
     linked = {
-        "sonarr": {"ip": LOCALHOST_IP, "port": SONARR_PORT, "apikey": "SKEY"},
-        "radarr": {"ip": LOCALHOST_IP, "port": RADARR_PORT, "apikey": "RKEY"},
+        "sonarr": {"ip": LOCALHOST_IP, "port": SONARR_PORT, "base_url": "",
+                   "ssl": False, "apikey": "SKEY"},
+        "radarr": {"ip": LOCALHOST_IP, "port": RADARR_PORT, "base_url": "",
+                   "ssl": False, "apikey": "RKEY"},
         "general": {"use_sonarr": True, "use_radarr": True},
     }
     check("linked detected", is_bazarr_linked(linked, "SKEY", "RKEY") is True)
     check("unlinked detected", is_bazarr_linked({"sonarr": {"apikey": ""}}, "SKEY", "RKEY") is False)
+    check("bazarr form uses API field names",
+          bazarr_settings_form("SKEY", "RKEY")["settings-general-use_sonarr"] == "true"
+          and bazarr_settings_form("SKEY", "RKEY")["settings-sonarr-port"] == str(SONARR_PORT))
 
     summary = build_summary({"sonarr": "4.x"}, {"created": 1, "updated": 0, "unchanged": 0},
                             {"created": 0, "updated": 0, "unchanged": 0},
@@ -710,12 +782,22 @@ def self_test() -> int:
     return 1 if failures else 0
 
 
+def valid_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("port must be numeric") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    return port
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Wire Starr integrations (runs inside starr LXC)")
     parser.add_argument("--qbit-host", required=False, default=None)
     parser.add_argument("--qbit-user", default="admin")
     parser.add_argument("--qbit-pass-stdin", action="store_true")
-    parser.add_argument("--qbit-port", type=int, default=8090)
+    parser.add_argument("--qbit-port", type=valid_port, default=8090)
     parser.add_argument("--data-root", default=DATA_ROOT)
     parser.add_argument("--skip-bazarr", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

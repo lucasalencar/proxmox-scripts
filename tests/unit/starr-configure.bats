@@ -56,6 +56,8 @@ teardown() {
   /usr/bin/grep -q "pct push 105.*container/configure.py" "$MOCK_LOG"
   /usr/bin/grep -q "python3 /tmp/starr-configure.py" "$MOCK_LOG"
   /usr/bin/grep -q -- "--qbit-pass-stdin" "$MOCK_LOG"
+  /usr/bin/grep -q -- "--qbit-user admin" "$MOCK_LOG"
+  /usr/bin/grep -q -- "--qbit-port 8090" "$MOCK_LOG"
   /usr/bin/grep -q "192.168.31.86" "$MOCK_LOG"
   # Secrets must never appear on stdout
   [[ "$output" != *"s3cret"* ]]
@@ -179,6 +181,16 @@ if errors:
     sys.exit(1)
 "
   [ "$status" -eq 0 ]
+}
+
+@test "starr container configure.py validates qbit port range" {
+  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-port 0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"between 1 and 65535"* ]]
+
+  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-port 65536
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"between 1 and 65535"* ]]
 }
 
 # -------------------------------------------------------------------
