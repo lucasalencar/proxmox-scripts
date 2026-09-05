@@ -45,8 +45,9 @@ SONARR_SYNC_CATEGORIES = [5000, 5010, 5020, 5030, 5040, 5045, 5050, 5090]
 SONARR_ANIME_CATEGORIES = [5070]
 RADARR_SYNC_CATEGORIES = [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060, 2070, 2080, 2090]
 
-# Top-level keys compared (besides fields) to decide created/updated/unchanged.
-PROPAGATED_KEYS = ("enable", "syncLevel", "priority",
+# Top-level keys reconciled (besides fields) to decide created/updated/unchanged.
+RECONCILED_KEYS = ("enable", "name", "implementation", "implementationName",
+                   "configContract", "syncLevel", "priority",
                    "removeCompletedDownloads", "removeFailedDownloads", "protocol")
 
 
@@ -220,7 +221,7 @@ def merge_fields(existing: Dict[str, Any],
     for field in desired.get("fields", []):
         by_name[field["name"]] = field["value"]
     merged["fields"] = [{"name": n, "value": v} for n, v in by_name.items()]
-    for key in PROPAGATED_KEYS:
+    for key in RECONCILED_KEYS:
         if key in desired:
             merged[key] = desired[key]
     return merged
@@ -235,7 +236,7 @@ def plan_action(match: Callable[[Dict[str, Any]], bool],
     merged = merge_fields(item, desired)
     if fields_map(merged) == fields_map(item) and all(
             merged.get(k) == item.get(k)
-            for k in PROPAGATED_KEYS if k in desired):
+            for k in RECONCILED_KEYS if k in desired):
         return "unchanged"
     return "updated"
 
@@ -346,16 +347,24 @@ def qbit_login_succeeded(status: int, body: str) -> bool:
 
 
 def check_qbit_login(host: str, port: int, username: str, password: str) -> None:
-    req = build_qbit_login_request(host, port, username, password)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            if not qbit_login_succeeded(resp.status, resp.read().decode()):
-                fail("qBittorrent login rejected — check --qbit-user/--qbit-pass")
-    except urllib.error.HTTPError as exc:
-        fail("qBittorrent login failed (HTTP %s) — check host/user/password" % exc.code)
-    except OSError as exc:
-        fail("cannot reach qBittorrent at %s:%d (%s)" % (host, port, exc))
-    log("qBittorrent login ok")
+    deadline = time.time() + 30
+    last_error: Optional[Exception] = None
+    while time.time() < deadline:
+        req = build_qbit_login_request(host, port, username, password)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if not qbit_login_succeeded(resp.status, resp.read().decode()):
+                    fail("qBittorrent login rejected — check qBittorrent credentials")
+                log("qBittorrent login ok")
+                return
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                fail("qBittorrent login failed (HTTP %s) — check host/user/password" % exc.code)
+            last_error = exc
+        except OSError as exc:
+            last_error = exc
+        time.sleep(2)
+    fail("cannot reach qBittorrent at %s:%d after 30s: %s" % (host, port, last_error))
 
 
 def strip_inline_comment(value: str) -> str:
@@ -384,22 +393,27 @@ def parse_bazarr_yaml(path: str) -> Dict[str, Dict[str, str]]:
     sections: Dict[str, Dict[str, str]] = {}
     with open(path, encoding="utf-8", errors="replace") as handle:
         for current, line in iter_yaml_sections(handle.readlines()):
-            kv = re.match(r"^\s+([\w-]+):\s*(.*?)\s*$", line)
+            kv = re.match(r"^ {2}([\w-]+):\s*(.*?)\s*$", line)
             if kv and current:
                 sections.setdefault(current, {})[kv.group(1)] = strip_inline_comment(
                     kv.group(2)).strip("'\"")
     return sections
 
 
-def load_bazarr_api_key(config_path: str) -> str:
-    try:
-        sections = parse_bazarr_yaml(config_path)
-    except OSError:
-        fail("Bazarr config not found at %s" % config_path)
-    api_key = sections.get("auth", {}).get("apikey", "")
-    if not api_key:
-        fail("Bazarr API key missing in %s" % config_path)
-    return api_key
+def load_bazarr_api_key(config_path: str, timeout: int = 60) -> str:
+    deadline = time.time() + timeout
+    last_error = "file not found"
+    while time.time() < deadline:
+        try:
+            sections = parse_bazarr_yaml(config_path)
+            api_key = sections.get("auth", {}).get("apikey", "")
+            if api_key:
+                return api_key
+            last_error = "auth.apikey is empty"
+        except OSError as exc:
+            last_error = str(exc)
+        time.sleep(2)
+    fail("timed out waiting for Bazarr API key in %s: %s" % (config_path, last_error))
 
 
 def desired_bazarr_settings(sonarr_key: str, radarr_key: str) -> Dict[str, Any]:
@@ -458,7 +472,7 @@ def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> N
     original_stat = os.stat(config_path)
     out = []
     for current, line in iter_yaml_sections(lines):
-        key_match = re.match(r"^(\s+)([\w-]+):", line)
+        key_match = re.match(r"^( {2})([\w-]+):", line)
         if key_match and current in ("sonarr", "radarr") and key_match.group(2) in (
                 "ip", "port", "base_url", "ssl", "apikey"):
             values = {
@@ -471,7 +485,7 @@ def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> N
             out.append("%s%s: %s\n" % (key_match.group(1), key_match.group(2),
                                         values[key_match.group(2)]))
             continue
-        use = re.match(r"^(\s+)(use_(?:sonarr|radarr)):", line)
+        use = re.match(r"^( {2})(use_(?:sonarr|radarr)):", line)
         if current == "general" and use:
             out.append("%s%s: True\n" % (use.group(1), use.group(2)))
             continue
@@ -492,7 +506,7 @@ def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> N
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.writelines(out)
-        os.chmod(tmp_path, stat.S_IMODE(original_stat.st_mode))
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
         if os.geteuid() == 0:
             os.chown(tmp_path, original_stat.st_uid, original_stat.st_gid)
         os.replace(tmp_path, config_path)
@@ -518,7 +532,7 @@ def ensure_yaml_entries(lines: List[str], section: str,
         present = {
             match.group(1)
             for line in lines[start + 1:end]
-            if (match := re.match(r"^\s+([\w-]+):", line))
+            if (match := re.match(r"^ {2}([\w-]+):", line))
         }
         missing = [key for key in entries if key not in present]
         if missing:
@@ -687,7 +701,8 @@ def self_test() -> int:
 
     check("plan empty creates", plan_action(match_qbittorrent, [], sonarr_client) == "created")
     same = {"id": 1, "enable": True, "priority": 1, "protocol": "torrent",
-            "implementation": "QBittorrent",
+            "name": "qBittorrent", "implementation": "QBittorrent",
+            "implementationName": "qBittorrent", "configContract": "QBittorrentSettings",
             "removeCompletedDownloads": True, "removeFailedDownloads": True,
             "fields": fields_list(cmap)}
     check("plan identical unchanged", plan_action(match_qbittorrent, [same], sonarr_client) == "unchanged")
