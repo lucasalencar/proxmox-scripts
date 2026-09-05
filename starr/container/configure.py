@@ -125,6 +125,12 @@ def wait_healthy(name: str, base: str, api_key: str, status_path: str,
             status = servarr_request("GET", base, api_key, status_path)
             log("%s healthy (v%s)" % (name, status.get("version", "?")))
             return status
+        except ApiError as exc:
+            if exc.status in (401, 403, 404):
+                fail("%s health check failed with HTTP %s; check its API key and endpoint"
+                     % (name, exc.status))
+            last = exc
+            time.sleep(3)
         except Exception as exc:  # noqa: BLE001 - retry until timeout
             last = exc
             time.sleep(3)
@@ -333,7 +339,8 @@ def ensure_prowlarr_app(kind: str, prowlarr_key: str, target_key: str,
 
 def build_qbit_login_request(host: str, port: int, username: str,
                              password: str) -> urllib.request.Request:
-    base = "http://%s:%d" % (host, port)
+    url_host = "[%s]" % host if ":" in host and not host.startswith("[") else host
+    base = "http://%s:%d" % (url_host, port)
     data = urllib.parse.urlencode({"username": username, "password": password}).encode()
     req = urllib.request.Request(base + "/api/v2/auth/login", data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
@@ -360,11 +367,14 @@ def check_qbit_login(host: str, port: int, username: str, password: str) -> None
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 fail("qBittorrent login failed (HTTP %s) — check host/user/password" % exc.code)
-            last_error = exc
+            if exc.code == 404:
+                fail("qBittorrent login endpoint returned HTTP 404; check host and port")
+            last_error = "HTTP %s" % exc.code
         except OSError as exc:
             last_error = exc
         time.sleep(2)
-    fail("cannot reach qBittorrent at %s:%d after 30s: %s" % (host, port, last_error))
+    fail("qBittorrent login did not succeed at %s:%d after 30s: %s"
+         % (host, port, last_error))
 
 
 def strip_inline_comment(value: str) -> str:
@@ -426,6 +436,10 @@ def desired_bazarr_settings(sonarr_key: str, radarr_key: str) -> Dict[str, Any]:
     }
 
 
+def normalize_bazarr_base_url(value: Any) -> str:
+    return "" if value in (None, "", "/") else str(value).rstrip("/")
+
+
 def bazarr_settings_form(sonarr_key: str, radarr_key: str) -> Dict[str, str]:
     desired = desired_bazarr_settings(sonarr_key, radarr_key)
     return {
@@ -449,8 +463,12 @@ def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str)
     sonarr = settings.get("sonarr", {}) or {}
     radarr = settings.get("radarr", {}) or {}
     general = settings.get("general", {}) or {}
-    return (all(sonarr.get(key, "") == value for key, value in desired["sonarr"].items())
-            and all(radarr.get(key, "") == value for key, value in desired["radarr"].items())
+    return (all((normalize_bazarr_base_url(sonarr.get(key, ""))
+                 if key == "base_url" else sonarr.get(key, "")) == value
+               for key, value in desired["sonarr"].items())
+            and all((normalize_bazarr_base_url(radarr.get(key, ""))
+                     if key == "base_url" else radarr.get(key, "")) == value
+                    for key, value in desired["radarr"].items())
             and all(general.get(key) is value for key, value in desired["general"].items()))
 
 
@@ -779,6 +797,9 @@ def self_test() -> int:
         "general": {"use_sonarr": True, "use_radarr": True},
     }
     check("linked detected", is_bazarr_linked(linked, "SKEY", "RKEY") is True)
+    slash_linked = dict(linked)
+    slash_linked["sonarr"] = dict(linked["sonarr"], base_url="/")
+    check("bazarr root base URL normalized", is_bazarr_linked(slash_linked, "SKEY", "RKEY") is True)
     check("unlinked detected", is_bazarr_linked({"sonarr": {"apikey": ""}}, "SKEY", "RKEY") is False)
     check("bazarr form uses API field names",
           bazarr_settings_form("SKEY", "RKEY")["settings-general-use_sonarr"] == "true"

@@ -93,7 +93,7 @@ fi
 log_step "Configuring Starr integrations (container $starr_id, qBittorrent at $QBIT_HOST:$QBIT_PORT)..."
 wait_container_ready "$starr_id" || exit 1
 
-REMOTE="/tmp/starr-configure.py"
+REMOTE="/root/starr-configure.py"
 if ! pct push "$starr_id" "$SCRIPT_DIR/container/configure.py" "$REMOTE"; then
     log_error "Failed to push configure.py to container $starr_id"
     exit 1
