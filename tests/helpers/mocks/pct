@@ -116,9 +116,19 @@ EOF
       exit 0
     fi
 
-    if [[ "$*" == *"systemctl is-system-running"* ]] || [[ "$*" == *"systemctl is-active"* ]] || [[ "$*" == *"true"* ]]; then
-      if [ -n "${MOCK_PCT_EXEC_OUTPUT:-}" ]; then
-        echo -e "$MOCK_PCT_EXEC_OUTPUT"
+    if [[ "$*" == *"systemctl is-system-running"* ]] || [[ "$*" == *"systemctl is-active"* ]] || [[ "$*" == *" -- true" ]] || [[ "$*" == *" -- true "* ]]; then
+      # Readiness probes are silent on real hosts — never echo mock output here,
+      # otherwise callers capturing stdout (e.g. get_container_ip wrapping
+      # wait_container_ready) get polluted with unrelated fixture data.
+      if [ "${MOCK_PCT_EXEC_FAIL:-0}" = "1" ]; then
+        exit 1
+      fi
+      exit 0
+    fi
+
+    if [[ "$*" == *"ss -tln"* ]]; then
+      if [ -n "${MOCK_PCT_EXEC_SS_OUTPUT:-}" ]; then
+        echo -e "$MOCK_PCT_EXEC_SS_OUTPUT"
       fi
       if [ "${MOCK_PCT_EXEC_FAIL:-0}" = "1" ]; then
         exit 1
