@@ -80,3 +80,10 @@ After every `git push` (new branch, PR update, or any remote push), wait for Git
 - Use `gh run list --branch <branch>`, `gh pr checks`, or `gh run watch <run-id>` to monitor.
 - If CI fails, fix the failure immediately with a follow-up commit/push — never leave a pushed branch with red CI.
 - This applies even when the user did not explicitly ask to check CI.
+
+### 13. READMEs must not re-explain scripts
+
+Package READMEs document usage and user-facing info (commands to run, ports, folder structure, post-install steps, verification). They must not narrate step-by-step what the script does — the script's own logs and code are the single source of truth, and duplicated narration drifts stale.
+
+- Link to the script (`see starr/install.sh`) instead of copying its logic.
+- Never paste generated output (e.g. Caddyfile snippets) into logs or READMEs when a generator owns it — point at the generator instead.
