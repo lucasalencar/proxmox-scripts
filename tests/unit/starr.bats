@@ -29,11 +29,8 @@ teardown() {
 @test "starr install creates new container and pushes provision script when not exists" {
   export MOCK_PCT_LIST="VMID       Status     Lock         Name"
   export MOCK_PCT_CONFIG="hostname: test"
-  # Mock pct exec for get_host_uid (id -u) and stat fallback
-  export MOCK_PCT_EXEC_ID_U_prowlarr="1000"
-  export MOCK_PCT_EXEC_ID_U_sonarr="1001"
-  export MOCK_PCT_EXEC_ID_U_radarr="1002"
-  export MOCK_PCT_EXEC_ID_U_bazarr="1003"
+  # Starr apps run as root (tarballs create no service users) — only root UID is resolved
+  export MOCK_PCT_EXEC_ID_U_root="0"
 
   run bash "$REPO_ROOT/starr/install.sh" 2>&1
   [ "$status" -eq 0 ]
@@ -44,15 +41,18 @@ teardown() {
   /usr/bin/grep -q "pct exec 105 -- bash /tmp/provision.sh" "$MOCK_LOG"
   # Should have applied mounts
   /usr/bin/grep -q "pct set 105 -mp1 /tank/data/mediaserver,mp=/data" "$MOCK_LOG"
+  # Should have granted root (100000) access, never queried service users
+  /usr/bin/grep -q "setfacl -R -m u:100000:rwx" "$MOCK_LOG"
+  ! /usr/bin/grep -q "pct exec 105 -- id -u prowlarr" "$MOCK_LOG"
+  ! /usr/bin/grep -q "pct exec 105 -- id -u sonarr" "$MOCK_LOG"
+  ! /usr/bin/grep -q "pct exec 105 -- id -u radarr" "$MOCK_LOG"
+  ! /usr/bin/grep -q "pct exec 105 -- id -u bazarr" "$MOCK_LOG"
 }
 
 @test "starr install reuses existing container and still provisions" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
   export MOCK_PCT_CONFIG="hostname: starr"
-  export MOCK_PCT_EXEC_ID_U_prowlarr="1000"
-  export MOCK_PCT_EXEC_ID_U_sonarr="1001"
-  export MOCK_PCT_EXEC_ID_U_radarr="1002"
-  export MOCK_PCT_EXEC_ID_U_bazarr="1003"
+  export MOCK_PCT_EXEC_ID_U_root="0"
 
   run bash "$REPO_ROOT/starr/install.sh" 2>&1
   [ "$status" -eq 0 ]
@@ -62,10 +62,25 @@ teardown() {
   [[ "$output" == *"reusing"* ]] || [[ "$output" == *"Found existing"* ]]
 }
 
-@test "starr install fails when service UID cannot be resolved" {
+@test "starr install succeeds with root ACL when service users do not exist" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
   export MOCK_PCT_CONFIG="hostname: starr"
+  # No service users in container (tarballs create none) — root still resolves
   export MOCK_PCT_EXEC_ID_U_prowlarr=""
+  export MOCK_PCT_EXEC_ID_U_sonarr=""
+  export MOCK_PCT_EXEC_ID_U_radarr=""
+  export MOCK_PCT_EXEC_ID_U_bazarr=""
+  export MOCK_PCT_EXEC_ID_U_root="0"
+
+  run bash "$REPO_ROOT/starr/install.sh" 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "setfacl -R -m u:100000:rwx" "$MOCK_LOG"
+}
+
+@test "starr install fails when root UID cannot be resolved" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+  export MOCK_PCT_CONFIG="hostname: starr"
+  export MOCK_PCT_EXEC_ID_U_root=""
 
   run bash "$REPO_ROOT/starr/install.sh" 2>&1
   [ "$status" -ne 0 ]

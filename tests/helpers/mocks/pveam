@@ -48,6 +48,9 @@ case "$cmd" in
       echo "mock pveam download failed" >&2
       exit 1
     fi
+    if [ -n "${MOCK_PVEAM_DOWNLOAD_STDOUT:-}" ]; then
+      echo "$MOCK_PVEAM_DOWNLOAD_STDOUT"
+    fi
     exit 0
     ;;
   *)

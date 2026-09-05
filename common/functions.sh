@@ -446,6 +446,32 @@ get_pve_next_id() {
     echo "$ctid"
 }
 
+# Returns the host template arch (amd64/arm64) for pveam template selection.
+# Test hook: MOCK_HOST_ARCH overrides detection.
+# Usage: arch=$(get_host_template_arch)
+get_host_template_arch() {
+    if [ -n "${MOCK_HOST_ARCH:-}" ]; then
+        echo "$MOCK_HOST_ARCH"
+        return 0
+    fi
+    local dpkg_arch
+    if dpkg_arch=$(dpkg --print-architecture 2>/dev/null) && [ -n "$dpkg_arch" ]; then
+        case "$dpkg_arch" in
+            amd64|x86_64) echo "amd64"; return 0 ;;
+            arm64|aarch64) echo "arm64"; return 0 ;;
+            *) echo "$dpkg_arch"; return 0 ;;
+        esac
+    fi
+    local uname_m
+    uname_m=$(uname -m 2>/dev/null || true)
+    case "$uname_m" in
+        x86_64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        "") return 1 ;;
+        *) echo "$uname_m" ;;
+    esac
+}
+
 # Ensures a Debian template is present on the given storage.
 # Prints the template name (e.g. debian-13-standard_13.0-1_amd64.tar.zst) to stdout.
 # Logs go to stderr so command substitution stays clean.
@@ -457,9 +483,27 @@ ensure_debian_template() {
 
     pveam update >/dev/null 2>&1 || true
 
-    template=$(pveam available --section system 2>/dev/null | grep -E "debian-${version}-standard" | awk '{print $2}' | sort -V | tail -1)
+    local arch
+    arch=$(get_host_template_arch 2>/dev/null || true)
+
+    local available
+    available=$(pveam available --section system 2>/dev/null || true)
+
+    if [ -n "$arch" ]; then
+        template=$(echo "$available" | grep -E "debian-${version}-standard" | grep -F "$arch" | awk '{print $2}' | sort -V | tail -1)
+    fi
     if [ -z "$template" ]; then
-        template=$(pveam available 2>/dev/null | grep -E "debian-${version}" | awk '{print $2}' | sort -V | tail -1)
+        template=$(echo "$available" | grep -E "debian-${version}-standard" | awk '{print $2}' | sort -V | tail -1)
+    fi
+    if [ -z "$template" ]; then
+        local available_all
+        available_all=$(pveam available 2>/dev/null || true)
+        if [ -n "$arch" ]; then
+            template=$(echo "$available_all" | grep -E "debian-${version}" | grep -F "$arch" | awk '{print $2}' | sort -V | tail -1)
+        fi
+        if [ -z "$template" ]; then
+            template=$(echo "$available_all" | grep -E "debian-${version}" | awk '{print $2}' | sort -V | tail -1)
+        fi
     fi
     if [ -z "$template" ]; then
         log_error "Could not find Debian ${version} template via pveam available" >&2
@@ -472,7 +516,7 @@ ensure_debian_template() {
 
     if ! pveam list "$storage" 2>/dev/null | grep -q "$template_file"; then
         log_step "Downloading template $template to $storage..." >&2
-        if ! pveam download "$storage" "$template" 2>&1; then
+        if ! pveam download "$storage" "$template" >&2; then
             log_error "Failed to download template $template" >&2
             return 1
         fi

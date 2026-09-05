@@ -338,3 +338,51 @@ echo hello' > "$tmp_script"
   [[ "$output" == *"Failed to execute"* ]]
   rm -f "$tmp_script"
 }
+
+# -------------------------------------------------------------------
+# ensure_debian_template arch awareness (host arch must win over sort order)
+# -------------------------------------------------------------------
+
+@test "ensure_debian_template picks amd64 on amd64 host even when arm64 sorts last" {
+  export MOCK_HOST_ARCH="amd64"
+  export MOCK_PVEAM_AVAILABLE_SYSTEM=$'system debian-13-standard_13.6-1_amd64.tar.zst\nsystem debian-13-standard_13.6-1_arm64.tar.zst'
+  export MOCK_PVEAM_LIST="local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; tmpl=$(ensure_debian_template 13 local 2>"$MOCK_TMPDIR/stderr.log"); echo "$tmpl"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "debian-13-standard_13.6-1_amd64.tar.zst" ]
+}
+
+@test "ensure_debian_template picks arm64 on arm64 host" {
+  export MOCK_HOST_ARCH="arm64"
+  export MOCK_PVEAM_AVAILABLE_SYSTEM=$'system debian-13-standard_13.6-1_amd64.tar.zst\nsystem debian-13-standard_13.6-1_arm64.tar.zst'
+  export MOCK_PVEAM_LIST="local:vztmpl/debian-13-standard_13.6-1_arm64.tar.zst"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; tmpl=$(ensure_debian_template 13 local 2>"$MOCK_TMPDIR/stderr.log"); echo "$tmpl"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "debian-13-standard_13.6-1_arm64.tar.zst" ]
+}
+
+@test "ensure_debian_template falls back to unfiltered when arch has no match" {
+  export MOCK_HOST_ARCH="riscv64"
+  export MOCK_PVEAM_AVAILABLE_SYSTEM=$'system debian-13-standard_13.6-1_amd64.tar.zst'
+  export MOCK_PVEAM_LIST="local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; tmpl=$(ensure_debian_template 13 local 2>"$MOCK_TMPDIR/stderr.log"); echo "$tmpl"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "debian-13-standard_13.6-1_amd64.tar.zst" ]
+}
+
+@test "ensure_debian_template stdout stays clean when download prints to stdout" {
+  export MOCK_HOST_ARCH="amd64"
+  export MOCK_PVEAM_AVAILABLE_SYSTEM=$'system debian-13-standard_13.6-1_amd64.tar.zst'
+  export MOCK_PVEAM_LIST=""
+  export MOCK_PVEAM_DOWNLOAD_STDOUT="downloading 100% -- noisy stdout"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; tmpl=$(ensure_debian_template 13 local 2>"$MOCK_TMPDIR/stderr.log"); echo "$tmpl"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "debian-13-standard_13.6-1_amd64.tar.zst" ]
+}
+
+@test "get_host_template_arch respects MOCK_HOST_ARCH override" {
+  export MOCK_HOST_ARCH="arm64"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_host_template_arch'
+  [ "$status" -eq 0 ]
+  [ "$output" = "arm64" ]
+}

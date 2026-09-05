@@ -61,20 +61,11 @@ fi
 
 log_success "Starr apps installed inside container $container_id"
 
-# --- 5. ACLs for each service user ---
-log_step "Configuring ACLs for Starr service users..."
-for svc in prowlarr sonarr radarr bazarr; do
-    host_uid=$(get_host_uid "$container_id" "$svc" 2>/dev/null)
-    if [ -z "$host_uid" ]; then
-        log_error "Could not determine UID for '$svc' inside container $container_id — aborting"
-        exit 1
-    fi
-    log_info "Granting UID $host_uid ($svc) access to mediaserver..."
-    add_dataset_acl "/tank/data/mediaserver" "$host_uid"
-done
-
-# Ensure container root (100000) can traverse
-add_dataset_acl "/tank/data/mediaserver" "100000" 2>/dev/null || true
+# --- 5. ACLs (apps run as root: tarballs create no service users) ---
+log_step "Configuring ACLs for Starr container root..."
+host_uid=$(get_host_uid "$container_id" root) || exit 1
+log_info "Granting UID $host_uid (root) access to mediaserver..."
+add_dataset_acl "/tank/data/mediaserver" "$host_uid"
 
 # --- 6. Caddy hints ---
 container_ip=$(get_container_ip "$container_id")
