@@ -20,25 +20,7 @@ This implements [TRaSH Guides — Getting Started Step 3](https://trash-guides.i
 bash starr/install.sh
 ```
 
-What it does (`starr/install.sh:1`):
-
-1. Finds or creates LXC `starr` (Debian 13, 4 cores / 4096 MB / 20 GB, unprivileged, `nesting=1`) — similar to `qbittorrent/install.sh:11` and `jellyfin/install.sh:10` but via `pct create` with auto storage/bridge/template detection.
-2. Ensures folders `starr/install.sh:68`:
-   ```
-   /tank/data/mediaserver/downloads/{series,movies,music,shows}
-   /tank/data/mediaserver/media/{Movies,Series,Music,Shows}
-   ```
-3. Bind mounts single dataset `starr/install.sh:72` (hardlink-safe):
-   ```
-   /tank/data/mediaserver -> /data   (via common/functions.sh:239 apply_mounts)
-   ```
-   See `LEARNINGS.md:21` — separate mounts for `media` and `downloads` break `link()`; a single parent dataset is required.
-4. Inside the CT installs each app by fetching the latest GitHub release tarball (mirrors `install/prowlarr-install.sh:16`, `install/sonarr-install.sh:17`, `install/radarr-install.sh:17`, `install/bazarr-install.sh:18`):
-   - `Prowlarr` -> `/opt/Prowlarr` + `/var/lib/prowlarr` + `systemd prowlarr` (9696)
-   - `Sonarr`   -> `/opt/Sonarr`   + `/var/lib/sonarr`   + `systemd sonarr`   (8989)
-   - `Radarr`   -> `/opt/Radarr`   + `/var/lib/radarr`   + `systemd radarr`   (7878)
-   - `Bazarr`   -> `/opt/bazarr`   + `/var/lib/bazarr`   + Python 3 venv + `systemd bazarr` (6767)
-5. Applies ZFS ACLs per service user (`common/functions.sh:346 add_dataset_acl` + `common/functions.sh:362 get_host_uid`) for `prowlarr/sonarr/radarr/bazarr` on `/tank/data/mediaserver`.
+See `starr/install.sh` for what each step does.
 
 ## Update
 
@@ -46,7 +28,7 @@ What it does (`starr/install.sh:1`):
 bash starr/update.sh
 ```
 
-Updates OS packages and each app by checking `~/.<app>` version vs GitHub `releases/latest` and redeploying the asset if outdated (same logic as `ct/prowlarr.sh` `update_script()` but batched for all 4).
+See `starr/update.sh` for details.
 
 ## Ports & Caddy
 
@@ -148,5 +130,5 @@ getfacl /tank/data/mediaserver | grep -E "1000|100000|10[0-9]{4}"
 
 ## Resources
 
-- Default: 4 cores / 4096 MB / 20 GB. Adjust in `starr/install.sh:24` `pct create` args if needed.
+- Default: 4 cores / 4096 MB / 20 GB. Adjust `CT_CORES`/`CT_MEMORY`/`CT_DISK`/`CT_SWAP` in `starr/install.sh` if needed.
 - All 4 apps share the same resource pool — more efficient than 4 x 1024 MB CTs.
