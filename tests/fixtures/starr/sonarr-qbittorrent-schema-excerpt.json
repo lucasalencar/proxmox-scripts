@@ -8,6 +8,7 @@
     {"name": "port", "value": 8080},
     {"name": "useSsl", "value": false},
     {"name": "urlBase", "value": null},
+    {"name": "apiKey", "value": null},
     {"name": "username", "value": null},
     {"name": "password", "value": null},
     {"name": "tvCategory", "value": "tv-sonarr"},

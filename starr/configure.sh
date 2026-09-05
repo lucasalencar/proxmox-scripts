@@ -52,19 +52,33 @@ if [ -z "$QBIT_PASS" ]; then
     exit 1
 fi
 
-if ! [[ "$QBIT_PORT" =~ ^[0-9]+$ ]]; then
-    log_error "Invalid qBittorrent port: '$QBIT_PORT' (must be numeric)."
+if ! [[ "$QBIT_PORT" =~ ^[0-9]+$ ]] || (( 10#$QBIT_PORT < 1 || 10#$QBIT_PORT > 65535 )); then
+    log_error "Invalid qBittorrent port: '$QBIT_PORT' (must be between 1 and 65535)."
     exit 1
 fi
 
-starr_id=$(get_container_id_by_name "starr")
+find_exact_container_id() {
+    local name="$1"
+    local ids
+    ids=$(pct list | awk -v target="$name" 'NR > 1 && $NF == target { print $1 }')
+    if [ -z "$ids" ]; then
+        return 1
+    fi
+    if [ "$(printf '%s\n' "$ids" | wc -l | tr -d ' ')" -ne 1 ]; then
+        log_error "Multiple containers have the exact name '$name'; refusing to choose one."
+        return 1
+    fi
+    printf '%s\n' "$ids"
+}
+
+starr_id=$(find_exact_container_id "starr")
 if [ -z "$starr_id" ]; then
     log_error "Could not find container 'starr'. Run install.sh first."
     exit 1
 fi
 
 if [ -z "$QBIT_HOST" ]; then
-    qbit_id=$(get_container_id_by_name "qbittorrent")
+    qbit_id=$(find_exact_container_id "qbittorrent")
     if [ -z "$qbit_id" ]; then
         log_error "Could not find container 'qbittorrent'. Run qbittorrent/install.sh first, or pass --qbit-host."
         exit 1
@@ -89,9 +103,11 @@ extra_args=()
 [ "$SKIP_BAZARR" -eq 1 ] && extra_args+=(--skip-bazarr)
 [ "$DRY_RUN" -eq 1 ] && extra_args+=(--dry-run)
 
-if ! pct exec "$starr_id" -- python3 "$REMOTE" \
+printf '%s\n' "$QBIT_PASS" | pct exec "$starr_id" -- python3 "$REMOTE" \
     --qbit-host "$QBIT_HOST" --qbit-user "$QBIT_USER" \
-    --qbit-pass "$QBIT_PASS" --qbit-port "$QBIT_PORT" "${extra_args[@]}"; then
+    --qbit-pass-stdin --qbit-port "$QBIT_PORT" "${extra_args[@]}"
+pct_status=${PIPESTATUS[1]}
+if [ "$pct_status" -ne 0 ]; then
     log_error "Starr configure failed inside container $starr_id"
     exit 1
 fi

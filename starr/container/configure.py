@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -22,12 +23,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
 
 PROWLARR_BASE = "http://localhost:9696"
 SONARR_BASE = "http://localhost:8989"
 RADARR_BASE = "http://localhost:7878"
 BAZARR_BASE = "http://localhost:6767"
+LOCALHOST_IP = "127.0.0.1"
+SONARR_PORT = urllib.parse.urlparse(SONARR_BASE).port or 8989
+RADARR_PORT = urllib.parse.urlparse(RADARR_BASE).port or 7878
 
 DATA_ROOT = "/var/lib"
 BAZARR_CONFIG = "/var/lib/bazarr/config/config.yaml"
@@ -50,7 +54,7 @@ def log(msg: str) -> None:
     print("[starr-configure] %s" % msg, file=sys.stderr, flush=True)
 
 
-def fail(msg: str) -> Any:
+def fail(msg: str) -> NoReturn:
     log("ERROR: %s" % msg)
     sys.exit(1)
 
@@ -76,6 +80,8 @@ def api_request(method: str, base: str, header_name: str, header_value: str,
             return json.loads(payload) if payload.strip() else None
     except urllib.error.HTTPError as exc:
         raise ApiError(exc.code, exc.read().decode(errors="replace"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise ApiError(None, str(exc))
 
 
 def servarr_request(method: str, base: str, api_key: str, path: str,
@@ -101,7 +107,6 @@ def read_api_key(data_root: str, app: str, timeout: int = 60) -> str:
             pass
         time.sleep(2)
     fail("timed out waiting for API key in %s (is %s running?)" % (path, app))
-    return ""
 
 
 def wait_healthy(name: str, base: str, api_key: str, status_path: str,
@@ -117,7 +122,6 @@ def wait_healthy(name: str, base: str, api_key: str, status_path: str,
             last = exc
             time.sleep(3)
     fail("%s not healthy after %ds: %s" % (name, timeout, last))
-    return {}
 
 
 def fields_list(values: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -149,6 +153,8 @@ def build_prowlarr_app(kind: str, api_key: str) -> Dict[str, Any]:
         "prowlarrUrl": PROWLARR_BASE,
         "baseUrl": base_url,
         "apiKey": api_key,
+        "authUsername": None,
+        "authPassword": None,
         "syncRejectBlocklistedTorrentHashesWhileGrabbing": False,
     }
     fields.update(extra)
@@ -167,16 +173,18 @@ def build_download_client(kind: str, host: str, port: int,
                           username: str, password: str) -> Dict[str, Any]:
     if kind == "sonarr":
         category = {"tvCategory": SONARR_CATEGORY, "recentTvPriority": 0,
-                    "olderTvPriority": 0}
+                    "olderTvPriority": 0, "tvImportedCategory": None}
     elif kind == "radarr":
         category = {"movieCategory": RADARR_CATEGORY, "recentMoviePriority": 0,
-                    "olderMoviePriority": 0}
+                    "olderMoviePriority": 0, "movieImportedCategory": None}
     else:
         fail("unknown app kind: %s (expected sonarr|radarr)" % kind)
     fields = {
         "host": host,
         "port": port,
         "useSsl": False,
+        "urlBase": None,
+        "apiKey": None,
         "username": username,
         "password": password,
         "initialState": 0,
@@ -215,15 +223,15 @@ def merge_fields(existing: Dict[str, Any],
 def plan_action(match: Callable[[Dict[str, Any]], bool],
                 collection: List[Dict[str, Any]],
                 desired: Dict[str, Any]) -> str:
-    for item in collection:
-        if match(item):
-            merged = merge_fields(item, desired)
-            if fields_map(merged) == fields_map(item) and all(
-                    merged.get(k) == item.get(k)
-                    for k in PROPAGATED_KEYS if k in desired):
-                return "unchanged"
-            return "updated"
-    return "created"
+    item = matching_item(match, collection)
+    if item is None:
+        return "created"
+    merged = merge_fields(item, desired)
+    if fields_map(merged) == fields_map(item) and all(
+            merged.get(k) == item.get(k)
+            for k in PROPAGATED_KEYS if k in desired):
+        return "unchanged"
+    return "updated"
 
 
 def upsert(match: Callable[[Dict[str, Any]], bool],
@@ -234,16 +242,30 @@ def upsert(match: Callable[[Dict[str, Any]], bool],
     action = plan_action(match, collection, desired)
     if action == "created":
         return action, create(desired)
-    target = next(item for item in collection if match(item))
+    target = matching_item(match, collection)
     if action == "unchanged":
         return action, target
     return action, update(target["id"], merge_fields(target, desired))
 
 
+def matching_item(match: Callable[[Dict[str, Any]], bool],
+                  collection: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    matches = [item for item in collection if match(item)]
+    if len(matches) > 1:
+        fail("multiple matching integration resources found; remove duplicates before retrying")
+    return matches[0] if matches else None
+
+
 def ensure_root_folder(base: str, api_key: str, path: str,
                        dry_run: bool, counters: Dict[str, int]) -> None:
     folders = servarr_request("GET", base, api_key, "/api/v3/rootfolder") or []
-    if any(f.get("path") == path for f in folders):
+    wanted_path = path.rstrip("/") or "/"
+    for folder in folders:
+        existing_path = (folder.get("path") or "").rstrip("/") or "/"
+        if existing_path != wanted_path:
+            continue
+        if folder.get("accessible") is False:
+            fail("root folder %s is not accessible; check the /data mount" % path)
         counters["unchanged"] += 1
         log("root folder %s already present" % path)
         return
@@ -318,7 +340,16 @@ def check_qbit_login(host: str, port: int, username: str, password: str) -> None
 
 
 def strip_inline_comment(value: str) -> str:
-    return re.sub(r"\s+#.*$", "", value).strip()
+    quote: Optional[str] = None
+    for index, char in enumerate(value):
+        if char in ("'", '"'):
+            if quote == char:
+                quote = None
+            elif quote is None:
+                quote = char
+        elif char == "#" and quote is None and index > 0 and value[index - 1].isspace():
+            return value[:index].rstrip()
+    return value.strip()
 
 
 def iter_yaml_sections(lines: List[str]):
@@ -346,7 +377,6 @@ def load_bazarr_api_key(config_path: str) -> str:
         sections = parse_bazarr_yaml(config_path)
     except OSError:
         fail("Bazarr config not found at %s" % config_path)
-        return ""
     api_key = sections.get("auth", {}).get("apikey", "")
     if not api_key:
         fail("Bazarr API key missing in %s" % config_path)
@@ -354,14 +384,23 @@ def load_bazarr_api_key(config_path: str) -> str:
 
 
 def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str) -> bool:
-    return ((settings.get("sonarr", {}) or {}).get("apikey") == sonarr_key
-            and (settings.get("radarr", {}) or {}).get("apikey") == radarr_key)
+    sonarr = settings.get("sonarr", {}) or {}
+    radarr = settings.get("radarr", {}) or {}
+    general = settings.get("general", {}) or {}
+    return (sonarr.get("ip") == LOCALHOST_IP
+            and sonarr.get("port") == SONARR_PORT
+            and sonarr.get("apikey") == sonarr_key
+            and radarr.get("ip") == LOCALHOST_IP
+            and radarr.get("port") == RADARR_PORT
+            and radarr.get("apikey") == radarr_key
+            and general.get("use_sonarr") is True
+            and general.get("use_radarr") is True)
 
 
 def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
     patch = {
-        "sonarr": {"ip": "127.0.0.1", "port": 8989, "apikey": sonarr_key},
-        "radarr": {"ip": "127.0.0.1", "port": 7878, "apikey": radarr_key},
+        "sonarr": {"ip": LOCALHOST_IP, "port": SONARR_PORT, "apikey": sonarr_key},
+        "radarr": {"ip": LOCALHOST_IP, "port": RADARR_PORT, "apikey": radarr_key},
         "general": {"use_sonarr": True, "use_radarr": True},
     }
     try:
@@ -369,35 +408,48 @@ def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
     except ApiError as exc:
         log("Bazarr API update failed (%s) — falling back to config file" % exc)
         return False
-    try:
-        verify = bazarr_request(api_key, "GET", "/api/system/settings") or {}
-    except ApiError as exc:
-        log("Bazarr verify after PATCH failed (%s) — falling back to config file" % exc)
-        return False
-    return is_bazarr_linked(verify, sonarr_key, radarr_key)
+    return wait_for_bazarr_link(api_key, sonarr_key, radarr_key)
 
 
 def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> None:
     with open(config_path, encoding="utf-8", errors="replace") as handle:
         lines = handle.readlines()
+    original_stat = os.stat(config_path)
     out = []
     for current, line in iter_yaml_sections(lines):
-        if current in ("sonarr", "radarr") and re.match(r"^\s+apikey:", line):
-            indent = line[:len(line) - len(line.lstrip())]
-            key = sonarr_key if current == "sonarr" else radarr_key
-            out.append("%sapikey: '%s'\n" % (indent, key))
+        key_match = re.match(r"^(\s+)([\w-]+):", line)
+        if key_match and current in ("sonarr", "radarr") and key_match.group(2) in (
+                "ip", "port", "apikey"):
+            values = {
+                "ip": LOCALHOST_IP,
+                "port": str(SONARR_PORT if current == "sonarr" else RADARR_PORT),
+                "apikey": "'%s'" % (sonarr_key if current == "sonarr" else radarr_key),
+            }
+            out.append("%s%s: %s\n" % (key_match.group(1), key_match.group(2),
+                                        values[key_match.group(2)]))
             continue
-        use = re.match(r"^\s+(use_(?:sonarr|radarr)):", line)
+        use = re.match(r"^(\s+)(use_(?:sonarr|radarr)):", line)
         if current == "general" and use:
-            indent = line[:len(line) - len(line.lstrip())]
-            out.append("%s%s: True\n" % (indent, use.group(1)))
+            out.append("%s%s: True\n" % (use.group(1), use.group(2)))
             continue
         out.append(line)
+
+    missing = {
+        "sonarr": {"ip": LOCALHOST_IP, "port": str(SONARR_PORT), "apikey": "'%s'" % sonarr_key},
+        "radarr": {"ip": LOCALHOST_IP, "port": str(RADARR_PORT), "apikey": "'%s'" % radarr_key},
+        "general": {"use_sonarr": "True", "use_radarr": "True"},
+    }
+    for section, entries in missing.items():
+        out = ensure_yaml_entries(out, section, entries)
+
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(config_path) or ".",
                                     prefix=".config.yaml.")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.writelines(out)
+        os.chmod(tmp_path, stat.S_IMODE(original_stat.st_mode))
+        if os.geteuid() == 0:
+            os.chown(tmp_path, original_stat.st_uid, original_stat.st_gid)
         os.replace(tmp_path, config_path)
     except BaseException:
         try:
@@ -407,43 +459,93 @@ def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> N
         raise
 
 
-def link_bazarr_via_file(config_path: str) -> None:
+def ensure_yaml_entries(lines: List[str], section: str,
+                        entries: Dict[str, str]) -> List[str]:
+    starts = []
+    for index, line in enumerate(lines):
+        match = re.match(r"^([\w-]+):\s*(?:#.*)?$", line)
+        if match:
+            starts.append((index, match.group(1)))
+    for position, (start, name) in enumerate(starts):
+        if name != section:
+            continue
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        present = {
+            match.group(1)
+            for line in lines[start + 1:end]
+            if (match := re.match(r"^\s+([\w-]+):", line))
+        }
+        missing = [key for key in entries if key not in present]
+        if missing:
+            lines[end:end] = ["  %s: %s\n" % (key, entries[key]) for key in missing]
+        return lines
+    if lines and lines[-1].strip():
+        lines.append("\n")
+    lines.append("%s:\n" % section)
+    lines.extend("  %s: %s\n" % (key, value) for key, value in entries.items())
+    return lines
+
+
+def link_bazarr_via_file() -> None:
     proc = subprocess.run(["systemctl", "restart", "bazarr"])
     if proc.returncode != 0:
         fail("bazarr restart failed (exit %d) — fix the service before retrying"
              % proc.returncode)
-    time.sleep(5)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        status = subprocess.run(["systemctl", "is-active", "--quiet", "bazarr"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if status.returncode == 0:
+            return
+        time.sleep(1)
+    fail("bazarr did not become active within 30s after restart")
+
+
+def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
+    deadline = time.time() + timeout
+    last: Optional[Exception] = None
+    while time.time() < deadline:
+        try:
+            return bazarr_request(api_key, "GET", "/api/system/settings") or {}
+        except ApiError as exc:
+            last = exc
+            time.sleep(2)
+    fail("Bazarr API was not ready after %ds: %s" % (timeout, last))
+
+
+def wait_for_bazarr_link(api_key: str, sonarr_key: str, radarr_key: str,
+                         timeout: int = 30) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            settings = bazarr_request(api_key, "GET", "/api/system/settings") or {}
+            if is_bazarr_linked(settings, sonarr_key, radarr_key):
+                return True
+        except ApiError:
+            pass
+        time.sleep(2)
+    return False
 
 
 def ensure_bazarr(sonarr_key: str, radarr_key: str,
                   dry_run: bool, config_path: str = BAZARR_CONFIG) -> str:
     api_key = load_bazarr_api_key(config_path)
-    if dry_run:
-        log("[dry-run] would link Bazarr to Sonarr/Radarr")
-        return "would_link"
-    try:
-        settings = bazarr_request(api_key, "GET", "/api/system/settings") or {}
-    except ApiError as exc:
-        fail("Bazarr settings fetch failed: %s" % exc)
-        return "failed"
+    settings = wait_for_bazarr_settings(api_key)
     if is_bazarr_linked(settings, sonarr_key, radarr_key):
         log("Bazarr already linked to Sonarr/Radarr")
         return "unchanged"
+    if dry_run:
+        log("[dry-run] would link Bazarr to Sonarr/Radarr")
+        return "would_link"
     if link_bazarr_via_api(api_key, sonarr_key, radarr_key):
         log("Bazarr linked to Sonarr/Radarr via API")
         return "linked"
     rewrite_bazarr_yaml(config_path, sonarr_key, radarr_key)
-    link_bazarr_via_file(config_path)
-    try:
-        verify = bazarr_request(api_key, "GET", "/api/system/settings") or {}
-    except ApiError as exc:
-        fail("Bazarr verify failed after config rewrite: %s" % exc)
-        return "failed"
-    if is_bazarr_linked(verify, sonarr_key, radarr_key):
+    link_bazarr_via_file()
+    if wait_for_bazarr_link(api_key, sonarr_key, radarr_key):
         log("Bazarr linked to Sonarr/Radarr via config file")
         return "linked"
     fail("Bazarr linking did not persist")
-    return "failed"
 
 
 def build_summary(versions: Dict[str, str], apps: Dict[str, int],
@@ -459,12 +561,12 @@ def build_summary(versions: Dict[str, str], apps: Dict[str, int],
     }
 
 
-def dump_desired(host: str, port: int, username: str, password: str) -> Dict[str, Any]:
+def dump_desired(host: str, port: int, username: str) -> Dict[str, Any]:
     return {
         "prowlarr_sonarr": build_prowlarr_app("sonarr", "APIKEY"),
         "prowlarr_radarr": build_prowlarr_app("radarr", "APIKEY"),
-        "download_sonarr": build_download_client("sonarr", host, port, username, password),
-        "download_radarr": build_download_client("radarr", host, port, username, password),
+        "download_sonarr": build_download_client("sonarr", host, port, username, "QBIT_PASS"),
+        "download_radarr": build_download_client("radarr", host, port, username, "QBIT_PASS"),
     }
 
 
@@ -556,6 +658,11 @@ def self_test() -> int:
           action == "updated" and calls[-1][0] == "update" and calls[-1][1][0] == 1)
     check("upsert update carries merged host",
           fields_map(calls[-1][1][1])["host"] == "192.168.31.86")
+    try:
+        matching_item(match_qbittorrent, [same, same])
+        check("duplicate matches rejected", False)
+    except SystemExit:
+        check("duplicate matches rejected", True)
 
     import tempfile
     sample = ("auth:\n  apikey: 'AUTHKEY' # rotated weekly\n  type: null\n"
@@ -571,8 +678,22 @@ def self_test() -> int:
     reparsed = parse_bazarr_yaml(tmp_path)
     check("yaml rewrite persists keys",
           reparsed["sonarr"]["apikey"] == "SKEY" and reparsed["radarr"]["apikey"] == "RKEY")
+    minimal = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
+    minimal.write("auth:\n  apikey: 'AUTHKEY'\n")
+    minimal.close()
+    rewrite_bazarr_yaml(minimal.name, "SKEY", "RKEY")
+    minimal_sections = parse_bazarr_yaml(minimal.name)
+    check("yaml rewrite adds missing sections",
+          minimal_sections["sonarr"]["apikey"] == "SKEY"
+          and minimal_sections["radarr"]["apikey"] == "RKEY"
+          and minimal_sections["general"]["use_sonarr"] == "True")
+    check("yaml quoted hash is preserved", strip_inline_comment("'secret #123' # note") == "'secret #123'")
 
-    linked = {"sonarr": {"apikey": "SKEY"}, "radarr": {"apikey": "RKEY"}}
+    linked = {
+        "sonarr": {"ip": LOCALHOST_IP, "port": SONARR_PORT, "apikey": "SKEY"},
+        "radarr": {"ip": LOCALHOST_IP, "port": RADARR_PORT, "apikey": "RKEY"},
+        "general": {"use_sonarr": True, "use_radarr": True},
+    }
     check("linked detected", is_bazarr_linked(linked, "SKEY", "RKEY") is True)
     check("unlinked detected", is_bazarr_linked({"sonarr": {"apikey": ""}}, "SKEY", "RKEY") is False)
 
@@ -593,7 +714,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Wire Starr integrations (runs inside starr LXC)")
     parser.add_argument("--qbit-host", required=False, default=None)
     parser.add_argument("--qbit-user", default="admin")
-    parser.add_argument("--qbit-pass", required=False, default=None)
+    parser.add_argument("--qbit-pass-stdin", action="store_true")
     parser.add_argument("--qbit-port", type=int, default=8090)
     parser.add_argument("--data-root", default=DATA_ROOT)
     parser.add_argument("--skip-bazarr", action="store_true")
@@ -610,13 +731,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.dump_desired:
         print(json.dumps(dump_desired(args.qbit_host or "QBIT_HOST",
                                       args.qbit_port,
-                                      args.qbit_user,
-                                      args.qbit_pass or "QBIT_PASS")))
+                                      args.qbit_user)))
         return 0
     if not args.qbit_host:
         fail("--qbit-host is required")
+    if not args.qbit_pass_stdin:
+        fail("--qbit-pass-stdin is required")
+    args.qbit_pass = sys.stdin.readline().rstrip("\r\n")
     if not args.qbit_pass:
-        fail("--qbit-pass is required")
+        fail("qBittorrent password was not provided on stdin")
 
     prowlarr_key = read_api_key(args.data_root, "prowlarr")
     sonarr_key = read_api_key(args.data_root, "sonarr")
@@ -647,11 +770,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     bazarr_action = "skipped"
     if not args.skip_bazarr:
-        bazarr_action = ensure_bazarr(sonarr_key, radarr_key, args.dry_run)
+        bazarr_config = os.path.join(args.data_root, "bazarr", "config", "config.yaml")
+        bazarr_action = ensure_bazarr(sonarr_key, radarr_key, args.dry_run, bazarr_config)
 
     print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run)))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ApiError as exc:
+        fail("API request failed: %s" % exc)
+    except (OSError, ValueError) as exc:
+        fail("configuration failed: %s" % exc)
