@@ -1,0 +1,6 @@
+{
+  "auth": {"type": null, "username": "", "password": "", "apikey": "8af8fakeapikey00000000000000000000"},
+  "general": {"use_sonarr": false, "use_radarr": false},
+  "sonarr": {"ip": "127.0.0.1", "port": 8989, "apikey": "", "ssl": false},
+  "radarr": {"ip": "127.0.0.1", "port": 7878, "apikey": "", "ssl": false}
+}

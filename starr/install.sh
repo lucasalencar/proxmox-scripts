@@ -100,3 +100,4 @@ fi
 
 echo ""
 log_info "Update later with: bash starr/update.sh"
+log_info "Wire integrations with: bash starr/configure.sh --qbit-pass '<qbit-admin-password>'"

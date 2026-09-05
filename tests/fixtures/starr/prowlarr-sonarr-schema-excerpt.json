@@ -1,0 +1,18 @@
+{
+  "implementation": "Sonarr",
+  "implementationName": "Sonarr",
+  "configContract": "SonarrSettings",
+  "infoLink": "https://wiki.servarr.com/prowlarr/supported-apps#sonarr",
+  "tags": [],
+  "fields": [
+    {"name": "prowlarrUrl", "value": "http://localhost:9696"},
+    {"name": "baseUrl", "value": "http://localhost:8989"},
+    {"name": "apiKey", "value": null},
+    {"name": "authUsername", "value": null},
+    {"name": "authPassword", "value": null},
+    {"name": "syncCategories", "value": [5000, 5010, 5020, 5030, 5040, 5045, 5050, 5090]},
+    {"name": "animeSyncCategories", "value": [5070]},
+    {"name": "syncAnimeStandardFormatSearch", "value": true},
+    {"name": "syncRejectBlocklistedTorrentHashesWhileGrabbing", "value": false}
+  ]
+}
