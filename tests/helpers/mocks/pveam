@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "pveam" "$@"
+
+cmd="${1:-}"
+case "$cmd" in
+  update)
+    if [ "${MOCK_PVEAM_UPDATE_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  available)
+    # pveam available [--section system]
+    if [[ "$*" == *"--section system"* ]]; then
+      if [ -n "${MOCK_PVEAM_AVAILABLE_SYSTEM+set}" ]; then
+        echo -e "$MOCK_PVEAM_AVAILABLE_SYSTEM"
+      elif [ -n "${MOCK_PVEAM_AVAILABLE+set}" ]; then
+        echo -e "$MOCK_PVEAM_AVAILABLE"
+      else
+        echo -e "system debian-13-standard_13.0-1_amd64.tar.zst"
+      fi
+    else
+      if [ -n "${MOCK_PVEAM_AVAILABLE+set}" ]; then
+        echo -e "$MOCK_PVEAM_AVAILABLE"
+      elif [ -n "${MOCK_PVEAM_AVAILABLE_SYSTEM+set}" ]; then
+        echo -e "$MOCK_PVEAM_AVAILABLE_SYSTEM"
+      else
+        echo -e "system debian-13-standard_13.0-1_amd64.tar.zst"
+      fi
+    fi
+    exit 0
+    ;;
+  list)
+    # pveam list <storage>
+    if [ -n "${MOCK_PVEAM_LIST+set}" ]; then
+      echo -e "$MOCK_PVEAM_LIST"
+    else
+      # Default empty (not present)
+      echo -e ""
+    fi
+    exit 0
+    ;;
+  download)
+    # pveam download <storage> <template>
+    if [ "${MOCK_PVEAM_DOWNLOAD_FAIL:-0}" = "1" ]; then
+      echo "mock pveam download failed" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac

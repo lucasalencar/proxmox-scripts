@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "ip" "$@"
+
+if [[ "$*" == *"link show"* ]]; then
+  if [ -n "${MOCK_IP_LINK_SHOW+set}" ]; then
+    echo -e "$MOCK_IP_LINK_SHOW"
+  else
+    echo -e "1: lo: <LOOPBACK>\n2: vmbr0: <BROADCAST,MULTICAST,UP> mtu 1500"
+  fi
+  exit 0
+fi
+exit 0
