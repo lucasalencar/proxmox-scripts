@@ -11,6 +11,7 @@ never printed; stdout carries only a JSON summary of actions taken.
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -44,12 +45,6 @@ RADARR_CATEGORY = "movies"
 SONARR_SYNC_CATEGORIES = [5000, 5010, 5020, 5030, 5040, 5045, 5050, 5090]
 SONARR_ANIME_CATEGORIES = [5070]
 RADARR_SYNC_CATEGORIES = [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060, 2070, 2080, 2090]
-
-# Top-level keys reconciled (besides fields) to decide created/updated/unchanged.
-RECONCILED_KEYS = ("enable", "name", "implementation", "implementationName",
-                   "configContract", "syncLevel", "priority",
-                   "removeCompletedDownloads", "removeFailedDownloads", "protocol")
-
 
 def log(msg: str) -> None:
     print("[starr-configure] %s" % msg, file=sys.stderr, flush=True)
@@ -227,9 +222,9 @@ def merge_fields(existing: Dict[str, Any],
     for field in desired.get("fields", []):
         by_name[field["name"]] = field["value"]
     merged["fields"] = [{"name": n, "value": v} for n, v in by_name.items()]
-    for key in RECONCILED_KEYS:
-        if key in desired:
-            merged[key] = desired[key]
+    for key, value in desired.items():
+        if key not in ("id", "fields"):
+            merged[key] = value
     return merged
 
 
@@ -240,9 +235,11 @@ def plan_action(match: Callable[[Dict[str, Any]], bool],
     if item is None:
         return "created"
     merged = merge_fields(item, desired)
+    desired_properties = {key: value for key, value in desired.items()
+                          if key not in ("id", "fields")}
     if fields_map(merged) == fields_map(item) and all(
-            merged.get(k) == item.get(k)
-            for k in RECONCILED_KEYS if k in desired):
+            merged.get(key) == item.get(key)
+            for key in desired_properties):
         return "unchanged"
     return "updated"
 
@@ -458,6 +455,24 @@ def bazarr_settings_form(sonarr_key: str, radarr_key: str) -> Dict[str, str]:
     }
 
 
+def bazarr_yaml_entries(sonarr_key: str, radarr_key: str) -> Dict[str, Dict[str, str]]:
+    desired = desired_bazarr_settings(sonarr_key, radarr_key)
+
+    def yaml_value(key: str, value: Any) -> str:
+        if key == "apikey":
+            return "'%s'" % value
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if value == "":
+            return "''"
+        return str(value)
+
+    return {
+        section: {key: yaml_value(key, value) for key, value in values.items()}
+        for section, values in desired.items()
+    }
+
+
 def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str) -> bool:
     desired = desired_bazarr_settings(sonarr_key, radarr_key)
     sonarr = settings.get("sonarr", {}) or {}
@@ -488,36 +503,24 @@ def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> N
     with open(config_path, encoding="utf-8", errors="replace") as handle:
         lines = handle.readlines()
     original_stat = os.stat(config_path)
+    entries = bazarr_yaml_entries(sonarr_key, radarr_key)
     out = []
     for current, line in iter_yaml_sections(lines):
         key_match = re.match(r"^( {2})([\w-]+):", line)
         if key_match and current in ("sonarr", "radarr") and key_match.group(2) in (
                 "ip", "port", "base_url", "ssl", "apikey"):
-            values = {
-                "ip": LOCALHOST_IP,
-                "port": str(SONARR_PORT if current == "sonarr" else RADARR_PORT),
-                "base_url": "''",
-                "ssl": "False",
-                "apikey": "'%s'" % (sonarr_key if current == "sonarr" else radarr_key),
-            }
             out.append("%s%s: %s\n" % (key_match.group(1), key_match.group(2),
-                                        values[key_match.group(2)]))
+                                        entries[current][key_match.group(2)]))
             continue
         use = re.match(r"^( {2})(use_(?:sonarr|radarr)):", line)
         if current == "general" and use:
-            out.append("%s%s: True\n" % (use.group(1), use.group(2)))
+            out.append("%s%s: %s\n" % (use.group(1), use.group(2),
+                                        entries[current][use.group(2)]))
             continue
         out.append(line)
 
-    missing = {
-        "sonarr": {"ip": LOCALHOST_IP, "port": str(SONARR_PORT),
-                   "base_url": "''", "ssl": "False", "apikey": "'%s'" % sonarr_key},
-        "radarr": {"ip": LOCALHOST_IP, "port": str(RADARR_PORT),
-                   "base_url": "''", "ssl": "False", "apikey": "'%s'" % radarr_key},
-        "general": {"use_sonarr": "True", "use_radarr": "True"},
-    }
-    for section, entries in missing.items():
-        out = ensure_yaml_entries(out, section, entries)
+    for section, section_entries in entries.items():
+        out = ensure_yaml_entries(out, section, section_entries)
 
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(config_path) or ".",
                                     prefix=".config.yaml.")
@@ -704,6 +707,8 @@ def self_test() -> int:
     check("qbit login uses form content type",
           login_request.get_header("Content-type") == "application/x-www-form-urlencoded")
     check("qbit login sends referer", login_request.get_header("Referer") == "http://192.168.31.86:8090/")
+    ipv6_request = build_qbit_login_request("2001:db8::86", 8090, "admin", "pw")
+    check("qbit IPv6 URL is bracketed", ipv6_request.full_url == "http://[2001:db8::86]:8090/api/v2/auth/login")
     check("qbit accepts current login responses",
           qbit_login_succeeded(200, "Ok.") and qbit_login_succeeded(204, "")
           and not qbit_login_succeeded(403, "Fails."))
@@ -828,9 +833,18 @@ def valid_port(value: str) -> int:
     return port
 
 
+def valid_host(value: str) -> str:
+    host = value.strip("[]")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("qBittorrent host must be an IP address") from exc
+    return host
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Wire Starr integrations (runs inside starr LXC)")
-    parser.add_argument("--qbit-host", required=False, default=None)
+    parser.add_argument("--qbit-host", type=valid_host, required=False, default=None)
     parser.add_argument("--qbit-user", default="admin")
     parser.add_argument("--qbit-pass-stdin", action="store_true")
     parser.add_argument("--qbit-port", type=valid_port, default=8090)

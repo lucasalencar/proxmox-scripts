@@ -193,6 +193,16 @@ if errors:
   [[ "$output" == *"between 1 and 65535"* ]]
 }
 
+@test "starr container configure.py accepts IP hosts and rejects URL userinfo" {
+  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-host 2001:db8::86
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2001:db8::86"* ]]
+
+  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-host '127.0.0.1@attacker.example'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must be an IP address"* ]]
+}
+
 # -------------------------------------------------------------------
 # tests/fixtures/starr — research snapshots stay valid JSON
 # -------------------------------------------------------------------
