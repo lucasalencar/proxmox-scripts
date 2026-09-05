@@ -6,7 +6,8 @@ source "$SCRIPT_DIR/../common/functions.sh"
 require_root
 
 DOMAIN="marx.home"
-CADDYFILE="$SCRIPT_DIR/../caddy/Caddyfile.local"
+CADDYFILE="${CADDYFILE:-$SCRIPT_DIR/../caddy/Caddyfile.local}"
+PVE_BASE="${PVE_BASE:-/etc/pve}"
 CHECK=$'\u2713'
 ARROW=$'\u2192'
 UPDATED=0
@@ -80,22 +81,30 @@ annotate_guest() {
         fi
     done
 
-    # Build HTML with clickable links
+    # Build HTML with clickable links (one pair per matching Caddy block)
     html_lines=("# <!-- proxmox-annotate -->")
     html_lines+=("# <div align='center' style='margin-top: 10px;'>")
+    matches=()
+    for idx in "${!CADDY_NAMES[@]}"; do
+        if [ "${CADDY_NAMES[$idx]}" = "$name" ] || [ "${CADDY_IPS[$idx]}" = "$ip" ]; then
+            matches+=("$idx")
+        fi
+    done
 
-    tls=${CADDY_TLS[$name]:-0}
-    proto=$([ "$tls" = "1" ] && echo "https" || echo "http")
-
-    if [ -n "${CADDY_PORT[$name]:-}" ]; then
-        url="$proto://$name.$DOMAIN"
-        port="${CADDY_PORT[$name]}"
-        html_lines+=("#   <p style='margin: 8px 0;'>")
-        html_lines+=("#     <a href='$url' target='_blank' rel='noopener noreferrer' style='font-size: 14px; color: #00617f; text-decoration: none;'>$url</a>")
-        html_lines+=("#   </p>")
-        html_lines+=("#   <p style='margin: 4px 0;'>")
-        html_lines+=("#     <a href='http://$ip:$port' target='_blank' rel='noopener noreferrer' style='font-size: 14px; color: #777; text-decoration: none;'>http://$ip:$port</a>")
-        html_lines+=("#   </p>")
+    if [ ${#matches[@]} -gt 0 ]; then
+        for idx in "${matches[@]}"; do
+            svc="${CADDY_NAMES[$idx]}"
+            svc_port="${CADDY_PORTS[$idx]}"
+            proto="http"
+            [ "${CADDY_TLS[$idx]}" = "1" ] && proto="https"
+            url="$proto://$svc.$DOMAIN"
+            html_lines+=("#   <p style='margin: 8px 0;'>")
+            html_lines+=("#     <a href='$url' target='_blank' rel='noopener noreferrer' style='font-size: 14px; color: #00617f; text-decoration: none;'>$url</a>")
+            html_lines+=("#   </p>")
+            html_lines+=("#   <p style='margin: 4px 0;'>")
+            html_lines+=("#     <a href='http://$ip:$svc_port' target='_blank' rel='noopener noreferrer' style='font-size: 14px; color: #777; text-decoration: none;'>http://$ip:$svc_port</a>")
+            html_lines+=("#   </p>")
+        done
     else
         html_lines+=("#   <p style='margin: 8px 0;'>")
         html_lines+=("#     <a href='http://$ip' target='_blank' rel='noopener noreferrer' style='font-size: 14px; color: #00617f; text-decoration: none;'>http://$ip</a>")
@@ -108,8 +117,12 @@ annotate_guest() {
     result=("${lines[@]:0:insert_idx}" "${html_lines[@]}" "${lines[@]:insert_idx}")
     printf '%s\n' "${result[@]}" > "$config_file"
 
-    if [ -n "${CADDY_PORT[$name]:-}" ]; then
-        echo "  $CHECK $name ($url / $proto://$ip:${CADDY_PORT[$name]})"
+    if [ ${#matches[@]} -gt 0 ]; then
+        descs=()
+        for idx in "${matches[@]}"; do
+            descs+=("${CADDY_NAMES[$idx]}")
+        done
+        echo "  $CHECK $name (${#matches[@]} link(s): $(IFS=,; echo "${descs[*]}"))"
     else
         echo "  $CHECK $name (http://$ip)"
     fi
@@ -119,20 +132,24 @@ annotate_guest() {
 log_step "Annotating guest descriptions"
 echo ""
 
-# Build name -> port map from Caddyfile
-declare -A CADDY_PORT
-declare -A CADDY_IP
-declare -A CADDY_TLS
+# Build subdomain -> endpoint map from Caddyfile (order-preserving:
+# multi-service guests own several blocks pointing at the same IP)
+CADDY_NAMES=()
+CADDY_IPS=()
+CADDY_PORTS=()
+CADDY_TLS=()
 
 if [ -f "$CADDYFILE" ]; then
     while IFS= read -r line; do
         if [[ $line =~ ^(http://)?([^.]+)\.$DOMAIN[[:space:]]*\{ ]]; then
             current_name="${BASH_REMATCH[2]}"
-            CADDY_TLS["$current_name"]=$([ -z "${BASH_REMATCH[1]}" ] && echo 1 || echo 0)
+            current_tls=$([ -z "${BASH_REMATCH[1]}" ] && echo 1 || echo 0)
         elif [[ $line =~ reverse_proxy[[:space:]]+(https?://)?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+) ]]; then
             if [ -n "${current_name:-}" ]; then
-                CADDY_PORT["$current_name"]="${BASH_REMATCH[3]}"
-                CADDY_IP["$current_name"]="${BASH_REMATCH[2]}"
+                CADDY_NAMES+=("$current_name")
+                CADDY_TLS+=("$current_tls")
+                CADDY_IPS+=("${BASH_REMATCH[2]}")
+                CADDY_PORTS+=("${BASH_REMATCH[3]}")
                 current_name=""
             fi
         fi
@@ -144,7 +161,7 @@ while IFS= read -r cid; do
     cid="${cid// /}"
     [ -z "$cid" ] && continue
 
-    config_file="/etc/pve/lxc/${cid}.conf"
+    config_file="$PVE_BASE/lxc/${cid}.conf"
     [ -f "$config_file" ] || continue
 
     name=$(pct config "$cid" 2>/dev/null | grep -oP 'hostname:\s*\K\S+')
@@ -164,7 +181,7 @@ while IFS= read -r vmid; do
     vmid="${vmid// /}"
     [ -z "$vmid" ] && continue
 
-    config_file="/etc/pve/qemu-server/${vmid}.conf"
+    config_file="$PVE_BASE/qemu-server/${vmid}.conf"
     [ -f "$config_file" ] || continue
 
     name=$(qm config "$vmid" 2>/dev/null | grep -oP '(?:hostname|name):\s*\K\S+')
