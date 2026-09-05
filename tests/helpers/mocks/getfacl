@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "getfacl" "$@"
+if [ "${MOCK_GETFACL_FAIL:-0}" = "1" ]; then
+  exit 1
+fi
+if [ -n "${MOCK_GETFACL_OUTPUT+set}" ]; then
+  echo -e "$MOCK_GETFACL_OUTPUT"
+fi
+exit 0

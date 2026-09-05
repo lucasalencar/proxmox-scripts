@@ -401,3 +401,38 @@ net0: name=eth0,bridge=vmbr0,ip=10.0.0.99/24,ip=10.0.0.99"
   grep -q "setfacl -R -d -m u:101000:rwx /tmp/fake" "$MOCK_LOG"
 }
 
+@test "add_dataset_acl skips recursive walk when entry already present" {
+  export MOCK_GETFACL_OUTPUT=$'user::rwx\nuser:101000:rwx\ngroup::rwx\nmask::rwx\nother::---\ndefault:user::rwx\ndefault:user:101000:rwx\ndefault:group::rwx\ndefault:mask::rwx\ndefault:other::---'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; add_dataset_acl "/tmp/fake" "101000"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already present"* ]] || [[ "$output" == *"kipping"* ]]
+  ! /usr/bin/grep -q "setfacl -R -m u:101000:rwx" "$MOCK_LOG"
+  ! /usr/bin/grep -q "setfacl -R -d -m u:101000:rwx" "$MOCK_LOG"
+}
+
+@test "add_dataset_acl applies when access entry missing" {
+  export MOCK_GETFACL_OUTPUT=$'user::rwx\ngroup::rwx\nmask::rwx\nother::---\ndefault:user::rwx\ndefault:group::rwx\ndefault:mask::rwx\ndefault:other::---'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; add_dataset_acl "/tmp/fake" "101000"'
+  [ "$status" -eq 0 ]
+  grep -q "setfacl -R -m u:101000:rwx /tmp/fake" "$MOCK_LOG"
+}
+
+@test "add_dataset_acl applies when default entry missing" {
+  export MOCK_GETFACL_OUTPUT=$'user::rwx\nuser:101000:rwx\ngroup::rwx\nmask::rwx\nother::---'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; add_dataset_acl "/tmp/fake" "101000"'
+  [ "$status" -eq 0 ]
+  grep -q "setfacl -R -d -m u:101000:rwx /tmp/fake" "$MOCK_LOG"
+}
+
+@test "add_dataset_acl applies when getfacl fails" {
+  export MOCK_GETFACL_FAIL=1
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; add_dataset_acl "/tmp/fake" "101000"'
+  [ "$status" -eq 0 ]
+  grep -q "setfacl -R -m u:101000:rwx /tmp/fake" "$MOCK_LOG"
+}
+
+@test "add_dataset_acl rejects empty uid" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; add_dataset_acl "/tmp/fake" ""'
+  [ "$status" -ne 0 ]
+}
+

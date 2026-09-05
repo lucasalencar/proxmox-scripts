@@ -380,6 +380,22 @@ add_dataset_acl() {
     local path="$1"
     local uid="$2"
 
+    if [ -z "$uid" ] || ! [[ "$uid" =~ ^[0-9]+$ ]]; then
+        log_error "add_dataset_acl: invalid uid '$uid'"
+        return 1
+    fi
+
+    # Fast path: skip the recursive walk when the entry is already present.
+    # setfacl -R over large datasets is slow; default ACLs cover new files.
+    local current_acls
+    if current_acls=$(getfacl "$path" 2>/dev/null); then
+        if echo "$current_acls" | grep -q "^user:$uid:rwx$" \
+            && echo "$current_acls" | grep -q "^default:user:$uid:rwx$"; then
+            log_info "ACL for UID $uid already present on $path — skipping"
+            return 0
+        fi
+    fi
+
     echo "Appending ACL for UID $uid to $path..."
     # Access ACL
     setfacl -R -m "u:$uid:rwx" "$path"
