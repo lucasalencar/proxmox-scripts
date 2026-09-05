@@ -14,7 +14,16 @@ usage() {
     echo "  --qbit-port <port>   qBittorrent WebUI port (default: 8090)" >&2
     echo "  --qbit-host <ip>     qBittorrent container IP (default: auto-discovered)" >&2
     echo "  --skip-bazarr        Skip Bazarr Sonarr/Radarr linking" >&2
-    echo "  --dry-run            Show planned actions without changing anything" >&2
+    echo "  --dry-run            Show planned actions without changing anything (services must still be up)" >&2
+}
+
+need_value() {
+    local opt="$1" val="${2:-}"
+    if [ -z "$val" ] || [[ "$val" == -* ]]; then
+        log_error "Option $opt requires a value."
+        usage
+        exit 1
+    fi
 }
 
 QBIT_USER="admin"
@@ -26,10 +35,10 @@ DRY_RUN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --qbit-pass) QBIT_PASS="${2:-}"; shift 2 ;;
-        --qbit-user) QBIT_USER="${2:-}"; shift 2 ;;
-        --qbit-port) QBIT_PORT="${2:-}"; shift 2 ;;
-        --qbit-host) QBIT_HOST="${2:-}"; shift 2 ;;
+        --qbit-pass) need_value "$1" "${2:-}"; QBIT_PASS="$2"; shift 2 ;;
+        --qbit-user) need_value "$1" "${2:-}"; QBIT_USER="$2"; shift 2 ;;
+        --qbit-port) need_value "$1" "${2:-}"; QBIT_PORT="$2"; shift 2 ;;
+        --qbit-host) need_value "$1" "${2:-}"; QBIT_HOST="$2"; shift 2 ;;
         --skip-bazarr) SKIP_BAZARR=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -40,6 +49,11 @@ done
 if [ -z "$QBIT_PASS" ]; then
     log_error "Missing qBittorrent password. Pass --qbit-pass or set QBIT_PASS (see qbittorrent install log)."
     usage
+    exit 1
+fi
+
+if ! [[ "$QBIT_PORT" =~ ^[0-9]+$ ]]; then
+    log_error "Invalid qBittorrent port: '$QBIT_PORT' (must be numeric)."
     exit 1
 fi
 

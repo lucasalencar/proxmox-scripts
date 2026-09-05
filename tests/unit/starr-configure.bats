@@ -60,6 +60,44 @@ teardown() {
   [[ "$output" != *"s3cret"* ]]
 }
 
+@test "starr configure fails fast on option without value" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires a value"* ]]
+}
+
+@test "starr configure fails on unknown option and non-numeric port" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+
+  run bash "$REPO_ROOT/starr/configure.sh" --bogus --qbit-pass secret 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unknown option"* ]]
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass secret --qbit-port abc 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must be numeric"* ]]
+}
+
+@test "starr configure fails when qbittorrent container not found" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass secret 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Could not find container 'qbittorrent'"* ]]
+}
+
+@test "starr configure forwards skip-bazarr and dry-run to in-container script" {  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 qbittorrent'
+  export MOCK_PCT_EXEC_HOSTNAME_I="192.168.31.86"
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret --skip-bazarr --dry-run 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "python3 /tmp/starr-configure.py.*--skip-bazarr" "$MOCK_LOG"
+  /usr/bin/grep -q "python3 /tmp/starr-configure.py.*--dry-run" "$MOCK_LOG"
+  [[ "$output" != *"s3cret"* ]]
+}
+
 @test "starr configure respects --qbit-host override" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 qbittorrent'
 
@@ -88,12 +126,28 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "starr container configure.py overrides schema defaults for our topology" {
-  /usr/bin/grep -q '"series"' "$REPO_ROOT/starr/container/configure.py"
-  /usr/bin/grep -q '"movies"' "$REPO_ROOT/starr/container/configure.py"
-  /usr/bin/grep -q '/data/media/Series' "$REPO_ROOT/starr/container/configure.py"
-  /usr/bin/grep -q '/data/media/Movies' "$REPO_ROOT/starr/container/configure.py"
-  /usr/bin/grep -q 'X-API-KEY' "$REPO_ROOT/starr/container/configure.py"
+@test "starr container configure.py builders only emit fields known by research fixtures" {
+  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-host 1.2.3.4 --qbit-pass pw
+  [ "$status" -eq 0 ]
+  run "$REAL_PYTHON3" -c "
+import json, sys
+dump = json.loads('''$output''')
+pairs = [('prowlarr_sonarr', 'prowlarr-sonarr-schema-excerpt.json'),
+         ('prowlarr_radarr', 'prowlarr-radarr-schema-excerpt.json'),
+         ('download_sonarr', 'sonarr-qbittorrent-schema-excerpt.json'),
+         ('download_radarr', 'radarr-qbittorrent-schema-excerpt.json')]
+errors = []
+for builder_key, fixture_name in pairs:
+    built = {f['name'] for f in dump[builder_key]['fields']}
+    known = {f['name'] for f in json.load(open('$REPO_ROOT/tests/fixtures/starr/' + fixture_name))['fields']}
+    unknown = built - known
+    if unknown:
+        errors.append('%s emits unknown fields %s' % (builder_key, sorted(unknown)))
+if errors:
+    print('\n'.join(errors))
+    sys.exit(1)
+"
+  [ "$status" -eq 0 ]
 }
 
 # -------------------------------------------------------------------
