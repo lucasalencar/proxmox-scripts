@@ -20,6 +20,14 @@
 
 - **Hardlinks require a single mount point in LXC containers:** When `media` and `downloads` need hardlink/instant moves (e.g., `*arr` + `qBittorrent`), they must be on the same ZFS dataset. Using separate datasets (`tank/data/downloads` and `tank/data/media`) makes `link()` fail even via a parent mount if the parent exposes private data. Solution is a dedicated dataset `tank/data/mediaserver` with subfolders `media/{Movies,Series,Music,Shows}` and `downloads/{series,movies,music,shows}` mounted as `-mp0 /tank/data/mediaserver,mp=/data`. Mounting each dataset separately makes the kernel treat them as distinct filesystems, causing `link()` to fail. The container apps must see both source and destination paths under one unified `/data` tree.
 
+- **Mock `pct exec -- true` must stay silent:** `get_container_ip` wraps `wait_container_ready` inside command substitution, so any stdout the mock emits for readiness probes (e.g. echoing a generic fixture var) pollutes the captured IP. Mock branches for `true`/`is-active` probes must print nothing, and per-command fixtures (e.g. `ss` output) need dedicated vars.
+
+- **`while read … done <<< "$var"` steals stdin from inner `read` prompts:** redirecting a loop's stdin to a herestring makes every `read -p` inside the body consume herestring lines instead of user answers. For interactive loops over a list, use `for x in $list` (intended word-splitting) so prompts still read from the user's stdin.
+
+- **Generators that own a file must preserve unmanaged blocks:** when a script rewrites a config file from scanned state (e.g. one block per guest), any block it didn't generate (manual extras, multi-service subdomains) is silently deleted on the next run. Persist the extra identity signals the file already has (saved IP/port per block) to re-attach them, and carry forward unknown blocks with a warning instead of dropping them.
+
+- **macOS `/bin/bash` is 3.2 — repo scripts using `declare -A`/`${var,,}` need bash 5 to test locally:** install via `brew install bash` and put `/opt/homebrew/bin` first in PATH when running bats. Production (Proxmox/Debian) and CI (ubuntu-latest) already have bash 5.
+
 - **Nextcloud storage migration — avoid data loss and duplicate mounts:**
   - Never `rm -rf` the data directory before mounting — it deletes Nextcloud's initial files (and user data on re-runs). The NextcloudPi community script already sets up `mp1` for the ZFS dataset, so re-creating it as `mp2` creates a duplicate.
   - Always check if a mount for the target `data_dir` already exists (`pct config | grep "mp=$data_dir"`) before adding one.
