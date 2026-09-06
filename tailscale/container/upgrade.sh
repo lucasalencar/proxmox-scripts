@@ -22,11 +22,12 @@ if ! systemctl is-active --quiet tailscaled; then
 fi
 log "tailscaled: active"
 
-if [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" != "1" ]; then
-    log "ERROR: IPv4 forwarding is disabled — subnet routing is broken."
+if [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" != "1" ] \
+    || [ "$(sysctl -n net.ipv6.conf.all.forwarding 2>/dev/null)" != "1" ]; then
+    log "ERROR: IP forwarding is disabled — subnet routing is broken."
     log "Re-run tailscale/container/provision.sh inside this container to restore it."
     exit 1
 fi
-log "IPv4 forwarding: enabled"
+log "IP forwarding: enabled (IPv4 + IPv6)"
 
 log "Upgrade complete. Login state and routes are preserved (no re-registration needed)."

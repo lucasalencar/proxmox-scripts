@@ -285,3 +285,68 @@ EOF
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
   fi
 }
+
+@test "caddy generate skips tagged VMs and keeps normal guests" {
+  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n107        running                 jellyfin'
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_107="hostname: jellyfin"
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST=$'VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID\n201 testvm               running    2048              20.00 9999'
+  export MOCK_QM_CONFIG_201=$'hostname: vmrouter\nTags: vpn;no-auto-proxy'
+  export MOCK_QM_STATUS="status: running"
+  export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.7"
+  export MOCK_PCT_EXEC_SS_OUTPUT=$'State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess\nLISTEN 0     128          0.0.0.0:8096      0.0.0.0:*'
+
+  run bash -c "printf '\n\n' | bash \"$REPO_ROOT/caddy/generate-caddyfile.sh\" 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Skipping VM 201"* ]]
+  # Normal guest still published, tagged VM absent
+  /usr/bin/grep -q "jellyfin.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "vmrouter" "$REPO_ROOT/caddy/Caddyfile.local"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+}
+
+@test "caddy generate drops stale blocks of no-auto-proxy guests" {
+  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  cat > "$REPO_ROOT/caddy/Caddyfile.local" <<'EOF'
+http://tailscale-router.marx.home {
+    reverse_proxy 10.0.0.6:8080
+}
+
+EOF
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_106=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST=$'VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID\n201 testvm               running    2048              20.00 9999'
+  export MOCK_QM_CONFIG_201="hostname: testvm"
+  export MOCK_QM_STATUS="status: running"
+  export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.6"
+  export MOCK_QM_GUEST_HOSTNAME_I="10.0.0.7"
+
+  run bash -c "printf '\n\n' | bash \"$REPO_ROOT/caddy/generate-caddyfile.sh\" 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dropping stale block tailscale-router"* ]]
+  # Stale router block gone, normal VM guest published
+  ! /usr/bin/grep -q "tailscale-router" "$REPO_ROOT/caddy/Caddyfile.local"
+  /usr/bin/grep -q "testvm.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+}

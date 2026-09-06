@@ -42,6 +42,8 @@ teardown() {
   # Should have pushed and executed the provision script
   /usr/bin/grep -q "pct push 106.*container/provision.sh" "$MOCK_LOG"
   /usr/bin/grep -q "pct exec 106 -- bash /tmp/provision.sh" "$MOCK_LOG"
+  # Fresh container must gain all required tags, including no-auto-proxy
+  /usr/bin/grep -q "pct set 106 --tags tailscale,router,no-auto-proxy" "$MOCK_LOG"
   # Must point at manual login, never print a token
   [[ "$output" == *"tailscale up"* ]]
   ! /usr/bin/grep -qi "token" "$MOCK_LOG"
@@ -70,6 +72,39 @@ teardown() {
   /usr/bin/grep -q "lxc.mount.entry: /dev/net/tun" "$PVE_LXC_CONF_DIR/106.conf"
   /usr/bin/grep -q "pct stop 106" "$MOCK_LOG"
   /usr/bin/grep -q "pct start 106" "$MOCK_LOG"
+}
+
+@test "tailscale install reconciles only the missing tags" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: foo,tailscale'
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -eq 0 ]
+  # Existing tags preserved, only router + no-auto-proxy appended
+  /usr/bin/grep -q "pct set 106 --tags foo,tailscale,router,no-auto-proxy" "$MOCK_LOG"
+}
+
+@test "tailscale install skips tag update when all tags present" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy\nlxc.cgroup2.devices.allow: c 10:200 rwm\nlxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -eq 0 ]
+  ! /usr/bin/grep -q "pct set 106" "$MOCK_LOG"
+  /usr/bin/grep -q "pct push 106.*provision.sh" "$MOCK_LOG"
+}
+
+@test "tailscale install refuses non-Debian guests" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG="hostname: tailscale-router"
+  export MOCK_PCT_EXEC_NOT_DEBIAN=1
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not Debian"* ]]
+  # Refused before touching TUN config or restarting
+  [ ! -f "$PVE_LXC_CONF_DIR/106.conf" ]
+  ! /usr/bin/grep -q "pct stop 106" "$MOCK_LOG"
 }
 
 @test "tailscale install is idempotent for TUN entries" {
@@ -102,6 +137,16 @@ teardown() {
   run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
   [ "$status" -ne 0 ]
   [[ "$output" == *"Failed to provision Tailscale"* ]] || [[ "$output" == *"Failed to push"* ]] || [[ "$output" == *"Failed to execute"* ]]
+}
+
+@test "tailscale install fails when provision exec fails" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\nlxc.cgroup2.devices.allow: c 10:200 rwm\nlxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'
+  export MOCK_PCT_EXEC_PROVISION_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Failed to provision Tailscale"* ]]
 }
 
 # -------------------------------------------------------------------
@@ -154,9 +199,9 @@ teardown() {
   /usr/bin/grep -q "systemctl enable" "$REPO_ROOT/tailscale/container/provision.sh"
   # Signed apt repo, never pipe-to-shell
   /usr/bin/grep -q "noarmor.gpg" "$REPO_ROOT/tailscale/container/provision.sh"
-  ! /usr/bin/grep -q "| sh" "$REPO_ROOT/tailscale/container/provision.sh"
+  ! /usr/bin/grep -qE "\| (sh|bash)" "$REPO_ROOT/tailscale/container/provision.sh"
   # Provision must not auto-login or embed credentials
-  ! /usr/bin/grep -qi "authkey\|auth-key\|token" "$REPO_ROOT/tailscale/container/provision.sh"
+  ! /usr/bin/grep -qiE "authkey|auth-key|token" "$REPO_ROOT/tailscale/container/provision.sh"
   run bash -n "$REPO_ROOT/tailscale/container/provision.sh"
   [ "$status" -eq 0 ]
 }
@@ -166,7 +211,7 @@ teardown() {
   /usr/bin/grep -q "is-active" "$REPO_ROOT/tailscale/container/upgrade.sh"
   /usr/bin/grep -q "ip_forward" "$REPO_ROOT/tailscale/container/upgrade.sh"
   # Upgrade must refresh, never reinstall from scratch
-  ! /usr/bin/grep -q "| sh" "$REPO_ROOT/tailscale/container/upgrade.sh"
+  ! /usr/bin/grep -qE "\| (sh|bash)" "$REPO_ROOT/tailscale/container/upgrade.sh"
   run bash -n "$REPO_ROOT/tailscale/container/upgrade.sh"
   [ "$status" -eq 0 ]
 }
@@ -174,6 +219,79 @@ teardown() {
 @test "tailscale container provision and upgrade are distinct entrypoints" {
   run bash -c 'diff -q "$REPO_ROOT/tailscale/container/provision.sh" "$REPO_ROOT/tailscale/container/upgrade.sh" && echo same || echo diff'
   [[ "$output" == *"diff"* ]]
+}
+
+# -------------------------------------------------------------------
+# tailscale/container scripts — executed with mocked guest tools
+# -------------------------------------------------------------------
+
+setup_sysroot() {
+  export SYSROOT="$MOCK_TMPDIR/sysroot"
+  mkdir -p "$SYSROOT/etc"
+  printf 'ID=debian\nVERSION_CODENAME=trixie\n' > "$SYSROOT/etc/os-release"
+  export TAILSCALE_SYSROOT="$SYSROOT"
+  export TAILSCALE_TUN_DEV=/dev/null
+}
+
+@test "tailscale provision executes and writes forwarding config" {
+  setup_sysroot
+
+  run bash "$REPO_ROOT/tailscale/container/provision.sh" 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "net.ipv4.ip_forward = 1" "$SYSROOT/etc/sysctl.d/99-tailscale.conf"
+  /usr/bin/grep -q "net.ipv6.conf.all.forwarding = 1" "$SYSROOT/etc/sysctl.d/99-tailscale.conf"
+  /usr/bin/grep -q "apt-get install -y tailscale" "$MOCK_LOG"
+  [[ "$output" == *"tailscaled: active"* ]]
+}
+
+@test "tailscale provision fails without TUN device" {
+  setup_sysroot
+  export TAILSCALE_TUN_DEV="$MOCK_TMPDIR/no-tun"
+
+  run bash "$REPO_ROOT/tailscale/container/provision.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"TUN"* ]]
+}
+
+@test "tailscale provision fails when service stays inactive" {
+  setup_sysroot
+  export MOCK_SYSTEMCTL_ACTIVE=1
+
+  run bash "$REPO_ROOT/tailscale/container/provision.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not active"* ]]
+}
+
+@test "tailscale upgrade executes, restarts service and verifies forwarding" {
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "apt-get install --only-upgrade -y tailscale" "$MOCK_LOG"
+  /usr/bin/grep -q "systemctl restart tailscaled" "$MOCK_LOG"
+  [[ "$output" == *"IP forwarding: enabled"* ]]
+}
+
+@test "tailscale upgrade starts an inactive service" {
+  export MOCK_SYSTEMCTL_ACTIVE=1
+
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "systemctl start tailscaled" "$MOCK_LOG"
+}
+
+@test "tailscale upgrade fails when IPv4 forwarding is off" {
+  export MOCK_SYSCTL_IP_FORWARD=0
+
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"forwarding is disabled"* ]]
+}
+
+@test "tailscale upgrade fails when IPv6 forwarding is off" {
+  export MOCK_SYSCTL_IPV6_FORWARDING=0
+
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"forwarding is disabled"* ]]
 }
 
 # -------------------------------------------------------------------
