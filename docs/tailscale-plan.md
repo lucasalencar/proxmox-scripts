@@ -105,8 +105,10 @@ pct create "$CTID" local:vztmpl/debian-13-standard_13.0-1_amd64.tar.zst \
   --features nesting=1 \
   --net0 name=eth0,bridge=vmbr0,ip=dhcp,firewall=1 \
   --onboot 1 --start 1 \
-  --tags tailscale,router
+  --tags tailscale,router,no-auto-proxy
 ```
+
+The `no-auto-proxy` tag is required: `caddy/generate-caddyfile.sh` skips tagged guests, so the router can never gain a public route (`tailscale/install.sh` reconciles the same tags).
 
 Adjust the template file, storage (`local-lvm`), and bridge to match your host; list templates with `pveam list local` and confirm the bridge with `ip -br link`.
 

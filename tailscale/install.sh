@@ -6,11 +6,6 @@ source "$SCRIPT_DIR/config.sh"
 
 require_root
 
-CT_CORES=1
-CT_MEMORY=512
-CT_DISK=8
-CT_SWAP=256
-
 # Test hook: LXC config dir (production: /etc/pve/lxc)
 LXC_CONF_DIR="${PVE_LXC_CONF_DIR:-/etc/pve/lxc}"
 
@@ -61,16 +56,16 @@ log_step "Starting Tailscale subnet router installation (dedicated LXC)..."
 
 # --- 1. Create / find container (exact name match, never a similar guest) ---
 container_id=$(get_container_id_by_exact_name "$CONTAINER_NAME")
-if [ -n "$container_id" ] && ! [[ "$container_id" =~ ^[0-9]+$ ]]; then
+if [ -n "$container_id" ] && ! is_valid_guest_id "$container_id"; then
     log_error "Refusing to operate on unexpected container ID '$container_id'"
     exit 1
 fi
 
 if [ -z "$container_id" ]; then
-    log_step "Container '$CONTAINER_NAME' not found — creating new Debian 13 LXC (${CT_CORES} core / ${CT_MEMORY} MB / ${CT_DISK}GB)..."
+    log_step "Container '$CONTAINER_NAME' not found — creating new Debian $DEBIAN_VERSION LXC (${CT_CORES} core / ${CT_MEMORY} MB / ${CT_DISK}GB)..."
 
     CTID=$(get_pve_next_id) || exit 1
-    if ! [[ "$CTID" =~ ^[0-9]+$ ]]; then
+    if ! is_valid_guest_id "$CTID"; then
         log_error "Refusing to operate on unexpected CTID '$CTID'"
         exit 1
     fi
@@ -83,7 +78,7 @@ if [ -z "$container_id" ]; then
     BRIDGE=$(detect_pve_bridge)
     log_info "Network bridge: $BRIDGE"
 
-    TEMPLATE=$(ensure_debian_template "13" "$TEMPLATE_STORAGE") || exit 1
+    TEMPLATE=$(ensure_debian_template "$DEBIAN_VERSION" "$TEMPLATE_STORAGE") || exit 1
     TEMPLATE_FILE=$(basename "$TEMPLATE")
 
     if ! create_lxc_container "$CTID" "$CONTAINER_NAME" "$TEMPLATE_STORAGE" "$TEMPLATE_FILE" "$ROOTFS_STORAGE" "$BRIDGE" "$CT_CORES" "$CT_MEMORY" "$CT_DISK" "$CT_SWAP" "$REQUIRED_TAGS" "Tailscale subnet router. Managed by proxmox-scripts/tailscale."; then
