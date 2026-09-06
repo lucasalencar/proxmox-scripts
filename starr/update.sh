@@ -7,7 +7,7 @@ require_root
 
 log_step "Checking for Starr stack updates..."
 
-container_id=$(get_container_id_by_name "starr")
+container_id=$(get_exact_container_id_by_name "starr")
 
 if [ -z "$container_id" ]; then
     log_error "Could not find container 'starr'. Run install.sh first."

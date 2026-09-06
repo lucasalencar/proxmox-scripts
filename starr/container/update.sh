@@ -4,6 +4,10 @@ export DEBIAN_FRONTEND=noninteractive
 
 log() { echo "[starr-update] $*"; }
 
+# Dependencies of starr/container/configure.py (migrates CTs provisioned before ruamel)
+log "Ensuring configure dependencies..."
+apt install -y python3-ruamel.yaml
+
 # Trigger a Servarr app self-update: flag + restart, the app pulls itself on start
 # Usage: trigger_update <service> <target> <data_dir>
 trigger_update() {

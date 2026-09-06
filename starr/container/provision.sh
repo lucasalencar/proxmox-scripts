@@ -7,7 +7,7 @@ log() { echo "[starr-install] $*"; }
 log "Updating OS and installing base dependencies..."
 apt update
 apt upgrade -y
-apt install -y curl sqlite3 libicu-dev unzip ca-certificates gnupg python3 python3-venv python3-pip libssl-dev
+apt install -y curl sqlite3 libicu-dev unzip ca-certificates gnupg python3 python3-venv python3-pip python3-ruamel.yaml libssl-dev
 
 # Detect arch for Servarr download URLs (same mapping as upstream install scripts)
 ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)

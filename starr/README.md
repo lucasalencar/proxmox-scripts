@@ -30,6 +30,14 @@ bash starr/update.sh
 
 See `starr/update.sh` for details.
 
+## Configure
+
+```bash
+bash starr/configure.sh --qbit-pass '...'
+```
+
+See `starr/configure.sh --help` for options.
+
 ## Ports & Caddy
 
 | Service | Port | Hostname |

@@ -333,6 +333,27 @@ get_container_id_by_name() {
     pct list | grep -F -i -- "$name" | sort -n | tail -1 | awk '{print $1}'
 }
 
+# Returns the container ID by its exact name (case-sensitive).
+# Unlike get_container_id_by_name (partial, case-insensitive), fails when
+# zero or multiple containers match exactly — never guesses between them.
+# Usage: get_exact_container_id_by_name "starr" || exit 1
+get_exact_container_id_by_name() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        return 1
+    fi
+    local ids
+    ids=$(pct list | awk -v target="$name" 'NR > 1 && $NF == target { print $1 }')
+    if [ -z "$ids" ]; then
+        return 1
+    fi
+    if [ "$(printf '%s\n' "$ids" | wc -l | tr -d ' ')" -ne 1 ]; then
+        log_error "Multiple containers have the exact name '$name'; refusing to choose one."
+        return 1
+    fi
+    printf '%s\n' "$ids"
+}
+
 # Configures ZFS ACLs for specific users and enables inheritance
 # Usage: setup_dataset_acls <dataset_name> <mount_path> <owner_uid> [extra_uids...]
 setup_dataset_acls() {

@@ -175,6 +175,40 @@ create_temp_root() {
 }
 
 # -------------------------------------------------------------------
+# get_exact_container_id_by_name
+# -------------------------------------------------------------------
+
+@test "get_exact_container_id_by_name matches exact name only" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 starr-backup'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "starr"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "105" ]
+}
+
+@test "get_exact_container_id_by_name is case-sensitive and rejects partials" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 starr-backup'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "Starr" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "starr-back" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+@test "get_exact_container_id_by_name fails on zero or multiple matches" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "missing" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 dup\n106        running                 dup'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "dup" && echo ok || echo fail'
+  [ "$output" = "fail" ] || [[ "$output" == *"Multiple containers"* ]]
+  [[ "$output" == *"Multiple containers"* ]]
+}
+
+@test "get_exact_container_id_by_name fails for empty name" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+# -------------------------------------------------------------------
 # get_vm_id_by_name
 # -------------------------------------------------------------------
 

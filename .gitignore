@@ -6,3 +6,6 @@ caddy/Caddyfile.local
 
 # Agent Review Dir
 .reviews
+
+# Python bytecode cache
+__pycache__/

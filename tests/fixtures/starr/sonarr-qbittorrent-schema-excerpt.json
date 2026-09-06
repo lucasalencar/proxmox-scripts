@@ -1,0 +1,23 @@
+{
+  "implementation": "QBittorrent",
+  "implementationName": "qBittorrent",
+  "configContract": "QBittorrentSettings",
+  "infoLink": "https://wiki.servarr.com/sonarr/supported-download-clients#qbittorrent",
+  "fields": [
+    {"name": "host", "value": "localhost"},
+    {"name": "port", "value": 8080},
+    {"name": "useSsl", "value": false},
+    {"name": "urlBase", "value": null},
+    {"name": "apiKey", "value": null},
+    {"name": "username", "value": null},
+    {"name": "password", "value": null},
+    {"name": "tvCategory", "value": "tv-sonarr"},
+    {"name": "tvImportedCategory", "value": null},
+    {"name": "recentTvPriority", "value": 0},
+    {"name": "olderTvPriority", "value": 0},
+    {"name": "initialState", "value": 0},
+    {"name": "sequentialOrder", "value": false},
+    {"name": "firstAndLast", "value": false},
+    {"name": "contentLayout", "value": 0}
+  ]
+}

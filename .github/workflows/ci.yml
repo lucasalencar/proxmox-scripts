@@ -32,12 +32,24 @@ jobs:
         run: make lint
 
   python:
-    name: python (media-organizer)
+    name: python unit tests (all packages)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Run Python tests
-        run: python3 -m unittest discover -s media-organizer/tests -v
+      - name: Install YAML dependency used by starr tests
+        run: pip install -q "ruamel.yaml>=0.18,<0.19"
+      - name: Run Python unit tests
+        # Convention: every test_*.py is self-contained (bootstraps its own
+        # sys.path) and runnable directly, so new packages are picked up
+        # automatically without touching this workflow.
+        run: |
+          set -eu
+          status=0
+          while IFS= read -r test_file; do
+            echo "--- $test_file ---"
+            python3 "$test_file" || status=1
+          done < <(find . -name 'test_*.py' -not -path './.git/*' -not -path '*/__pycache__/*' -not -path '*/venv/*' -not -path '*/.venv/*' -not -path '*/node_modules/*' | sort)
+          exit $status
