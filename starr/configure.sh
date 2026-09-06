@@ -5,16 +5,27 @@ source "$SCRIPT_DIR/../common/functions.sh"
 
 require_root
 
+QBIT_USER="admin"
+QBIT_PORT="8090"
+QBIT_HOST=""
+QBIT_PASS="${QBIT_PASS:-}"
+SKIP_BAZARR=0
+DRY_RUN=0
+
 usage() {
     echo "Usage: bash starr/configure.sh --qbit-pass <password> [options]" >&2
     echo "" >&2
     echo "Options:" >&2
     echo "  --qbit-pass <pass>   qBittorrent admin password (or QBIT_PASS env, from qbittorrent install log)" >&2
-    echo "  --qbit-user <user>   qBittorrent username (default: admin)" >&2
-    echo "  --qbit-port <port>   qBittorrent WebUI port (default: 8090)" >&2
+    echo "  --qbit-user <user>   qBittorrent username (default: $QBIT_USER)" >&2
+    echo "  --qbit-port <port>   qBittorrent WebUI port (default: $QBIT_PORT)" >&2
     echo "  --qbit-host <ip>     qBittorrent container IP (default: auto-discovered)" >&2
     echo "  --skip-bazarr        Skip Bazarr Sonarr/Radarr linking" >&2
-    echo "  --dry-run            Show planned actions without changing anything (services must still be up)" >&2
+    echo "  --dry-run            Show planned actions without changing anything (services must still be up; password is not validated in this mode)" >&2
+    echo "" >&2
+    echo "Notes:" >&2
+    echo "  Secrets already stored server-side read back masked, so changing a password" >&2
+    echo "  requires deleting the resource first and re-running to recreate it." >&2
 }
 
 need_value() {
@@ -25,13 +36,6 @@ need_value() {
         exit 1
     fi
 }
-
-QBIT_USER="admin"
-QBIT_PORT="8090"
-QBIT_HOST=""
-QBIT_PASS="${QBIT_PASS:-}"
-SKIP_BAZARR=0
-DRY_RUN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
