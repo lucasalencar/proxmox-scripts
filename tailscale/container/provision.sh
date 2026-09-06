@@ -19,8 +19,17 @@ apt-get install -y ca-certificates curl gnupg
 log "Adding the official Tailscale apt repository (signed)..."
 . "${SYSROOT}/etc/os-release"
 mkdir -p "$(dirname "$KEYRING")" "$(dirname "$SOURCES_LIST")" "$(dirname "$SYSCTL_CONF")"
-curl -fsSL "https://pkgs.tailscale.com/stable/${ID}/${VERSION_CODENAME}.noarmor.gpg" -o "$KEYRING"
-curl -fsSL "https://pkgs.tailscale.com/stable/${ID}/${VERSION_CODENAME}.tailscale-keyring.list" -o "$SOURCES_LIST"
+tmp_key="$(mktemp)"
+tmp_list="$(mktemp)"
+curl -fsSL "https://pkgs.tailscale.com/stable/${ID}/${VERSION_CODENAME}.noarmor.gpg" -o "$tmp_key"
+curl -fsSL "https://pkgs.tailscale.com/stable/${ID}/${VERSION_CODENAME}.tailscale-keyring.list" -o "$tmp_list"
+if ! grep -q "signed-by" "$tmp_list"; then
+    log "ERROR: downloaded source list does not reference the signed keyring — refusing to install"
+    rm -f "$tmp_key" "$tmp_list"
+    exit 1
+fi
+mv "$tmp_key" "$KEYRING"
+mv "$tmp_list" "$SOURCES_LIST"
 
 log "Installing Tailscale..."
 apt-get update
@@ -49,10 +58,11 @@ if [ ! -c "$TUN_DEV" ]; then
 fi
 log "TUN device: present"
 
-if [ "$(sysctl -n net.ipv4.ip_forward)" != "1" ]; then
-    log "ERROR: IPv4 forwarding is disabled — subnet routing would be broken."
+if [ "$(sysctl -n net.ipv4.ip_forward)" != "1" ] \
+    || [ "$(sysctl -n net.ipv6.conf.all.forwarding)" != "1" ]; then
+    log "ERROR: IP forwarding is disabled — subnet routing would be broken."
     exit 1
 fi
-log "IPv4 forwarding: enabled"
+log "IP forwarding: enabled (IPv4 + IPv6)"
 
 log "Provision complete. Next: run 'tailscale up' to log in (manual step, never automated with credentials)."

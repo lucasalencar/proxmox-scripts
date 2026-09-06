@@ -107,6 +107,58 @@ teardown() {
   ! /usr/bin/grep -q "pct stop 106" "$MOCK_LOG"
 }
 
+@test "tailscale install refuses unexpected container IDs" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n../../etc/cron.d/x running                 tailscale-router'
+  export MOCK_PCT_CONFIG="hostname: tailscale-router"
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unexpected container ID"* ]]
+  [ ! -f "$PVE_LXC_CONF_DIR/x.conf" ]
+}
+
+@test "tailscale install fails when tag reconciliation fails" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG="hostname: tailscale-router"
+  export MOCK_PCT_SET_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"required tags"* ]]
+}
+
+@test "tailscale install fails when container never becomes ready" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\nlxc.cgroup2.devices.allow: c 10:200 rwm\nlxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'
+  export MOCK_PCT_EXEC_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not ready"* ]]
+}
+
+@test "tailscale install completes partial TUN config without duplication" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\nlxc.cgroup2.devices.allow: c 10:200 rwm'
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -eq 0 ]
+  # Live-present line is not duplicated into the conf; missing line added once
+  ! /usr/bin/grep -q "lxc.cgroup2.devices.allow" "$PVE_LXC_CONF_DIR/106.conf"
+  [ "$(/usr/bin/grep -c "lxc.mount.entry: /dev/net/tun" "$PVE_LXC_CONF_DIR/106.conf")" -eq 1 ]
+  /usr/bin/grep -q "pct stop 106" "$MOCK_LOG"
+  /usr/bin/grep -q "pct start 106" "$MOCK_LOG"
+}
+
+@test "tailscale install normalizes semicolon-separated tags" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: foo; tailscale'
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "pct set 106 --tags foo,tailscale,router,no-auto-proxy" "$MOCK_LOG"
+}
+
 @test "tailscale install is idempotent for TUN entries" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
   export MOCK_PCT_CONFIG="hostname: tailscale-router"
@@ -169,6 +221,24 @@ teardown() {
   run bash "$REPO_ROOT/tailscale/update.sh" 2>&1
   [ "$status" -ne 0 ]
   [[ "$output" == *"Could not find container"* ]]
+}
+
+@test "tailscale update refuses unexpected container IDs" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\nxyz        running                 tailscale-router'
+
+  run bash "$REPO_ROOT/tailscale/update.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unexpected container ID"* ]]
+}
+
+@test "tailscale update reconciles missing tags" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: tailscale'
+
+  run bash "$REPO_ROOT/tailscale/update.sh" 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "pct set 106 --tags tailscale,router,no-auto-proxy" "$MOCK_LOG"
+  /usr/bin/grep -q "pct push 106.*container/upgrade.sh" "$MOCK_LOG"
 }
 
 @test "tailscale update fails when upgrade push fails" {
@@ -262,6 +332,41 @@ setup_sysroot() {
   [[ "$output" == *"not active"* ]]
 }
 
+@test "tailscale provision fails when apt fails" {
+  setup_sysroot
+  export MOCK_APT_GET_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/container/provision.sh" 2>&1
+  [ "$status" -ne 0 ]
+}
+
+@test "tailscale provision fails when forwarding is off" {
+  setup_sysroot
+  export MOCK_SYSCTL_IP_FORWARD=0
+
+  run bash "$REPO_ROOT/tailscale/container/provision.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"forwarding is disabled"* ]]
+}
+
+@test "tailscale provision fails when IPv6 forwarding is off" {
+  setup_sysroot
+  export MOCK_SYSCTL_IPV6_FORWARDING=0
+
+  run bash "$REPO_ROOT/tailscale/container/provision.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"forwarding is disabled"* ]]
+}
+
+@test "tailscale provision fails when source list is unsigned" {
+  setup_sysroot
+  export MOCK_CURL_LIST_CONTENT="deb https://pkgs.tailscale.com/stable/debian trixie main"
+
+  run bash "$REPO_ROOT/tailscale/container/provision.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"signed"* ]]
+}
+
 @test "tailscale upgrade executes, restarts service and verifies forwarding" {
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -eq 0 ]
@@ -292,6 +397,13 @@ setup_sysroot() {
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -ne 0 ]
   [[ "$output" == *"forwarding is disabled"* ]]
+}
+
+@test "tailscale upgrade fails when service control fails" {
+  export MOCK_SYSTEMCTL_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -ne 0 ]
 }
 
 # -------------------------------------------------------------------

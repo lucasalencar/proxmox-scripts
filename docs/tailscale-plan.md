@@ -127,17 +127,10 @@ The subnet router runs in an existing LXC. Tailscale needs `/dev/net/tun`, which
 
 ```bash
 curl -fsSL -o /tmp/add-tailscale-lxc.sh https://raw.githubusercontent.com/community-scripts/ProxmoxVE/08fdd8875172abcd3c167f13a00bdb65fcb0e61e/tools/addon/add-tailscale-lxc.sh
-sha256sum /tmp/add-tailscale-lxc.sh
-bash /tmp/add-tailscale-lxc.sh
+echo "ad8d26f949974a7611f9ed8a0cac7b3d83ac217546c3adbb434afbe4d3532617  /tmp/add-tailscale-lxc.sh" | sha256sum -c - && bash /tmp/add-tailscale-lxc.sh
 ```
 
-The expected hash for that pinned commit is:
-
-```text
-ad8d26f949974a7611f9ed8a0cac7b3d83ac217546c3adbb434afbe4d3532617  /tmp/add-tailscale-lxc.sh
-```
-
-Abort on any mismatch. As an extra check, read through `/tmp/add-tailscale-lxc.sh` before executing it, so you run exactly the bytes you reviewed. Re-resolve the SHA if the upstream file changes, and re-review before adopting a new pin.
+The `sha256sum -c` check is enforcing: a mismatch aborts before anything executes. As an extra check, read through `/tmp/add-tailscale-lxc.sh` before executing it, so you run exactly the bytes you reviewed. Re-resolve the SHA if the upstream file changes, and re-review before adopting a new pin.
 
 What the script does:
 

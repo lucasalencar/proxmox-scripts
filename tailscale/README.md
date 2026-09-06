@@ -58,8 +58,8 @@ Then approve the route in the Tailscale admin console. Full verification checkli
 
 ```bash
 CTID=$(pct list | awk 'tolower($NF) == "tailscale-router" {print $1}')
-pct config "$CTID" | grep -E "lxc.cgroup2.devices.allow|lxc.mount.entry"
-pct exec "$CTID" -- ls -l /dev/net/tun
+pct config "$CTID" | grep -E "lxc.cgroup2.devices.allow|lxc.mount.entry: /dev/net/tun"
+pct exec "$CTID" -- test -c /dev/net/tun && echo "TUN device present"
 pct exec "$CTID" -- systemctl is-active tailscaled
 ```
 
