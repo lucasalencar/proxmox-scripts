@@ -477,6 +477,148 @@ class EnsureFlowTests(unittest.TestCase):
                 "would_link")
         self.assertEqual(transport.writes(), [])
 
+    def test_bazarr_unchanged_writes_nothing(self):
+        linked = {
+            "sonarr": {"ip": configure.LOCALHOST_IP, "port": configure.SONARR_PORT,
+                       "base_url": "", "ssl": False, "apikey": "S"},
+            "radarr": {"ip": configure.LOCALHOST_IP, "port": configure.RADARR_PORT,
+                       "base_url": "", "ssl": False, "apikey": "R"},
+            "general": {"use_sonarr": True, "use_radarr": True},
+        }
+        transport = FakeBazarrTransport(linked)
+        with unittest.mock.patch.object(configure, "bazarr_request", transport), \
+             unittest.mock.patch.object(configure, "parse_bazarr_yaml",
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}):
+            self.assertEqual(
+                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml"),
+                "unchanged")
+        self.assertEqual(transport.writes(), [])
+
+    def test_bazarr_api_linked_success(self):
+        unlinked = {"sonarr": {"apikey": ""}, "radarr": {}, "general": {}}
+        linked = {
+            "sonarr": {"ip": configure.LOCALHOST_IP, "port": configure.SONARR_PORT,
+                       "base_url": "", "ssl": False, "apikey": "S"},
+            "radarr": {"ip": configure.LOCALHOST_IP, "port": configure.RADARR_PORT,
+                       "base_url": "", "ssl": False, "apikey": "R"},
+            "general": {"use_sonarr": True, "use_radarr": True},
+        }
+        gets = []
+
+        def fake_request(method, path, api_key, body=None, form=False):
+            if method == "GET":
+                gets.append(1)
+                return linked if len(gets) > 1 else unlinked
+            return {"ok": True}
+
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=fake_request), \
+             unittest.mock.patch.object(configure, "parse_bazarr_yaml",
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}), \
+             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml") as rewrite, \
+             unittest.mock.patch.object(configure, "link_bazarr_via_file") as restart:
+            self.assertEqual(
+                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml"),
+                "linked")
+        rewrite.assert_not_called()
+        restart.assert_not_called()
+
+    def test_bazarr_fallback_rewrites_and_restarts(self):
+        calls = []
+
+        def fake_request(method, path, api_key, body=None, form=False):
+            calls.append(method)
+            if method == "POST":
+                raise configure.ApiError(None, "connection reset")
+            return {"sonarr": {"apikey": ""}, "radarr": {}, "general": {}}
+
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=fake_request), \
+             unittest.mock.patch.object(configure, "parse_bazarr_yaml",
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}), \
+             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml") as rewrite, \
+             unittest.mock.patch.object(configure, "link_bazarr_via_file") as restart, \
+             unittest.mock.patch.object(configure, "wait_for_bazarr_link",
+                                        return_value=True):
+            self.assertEqual(
+                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml"),
+                "linked")
+        self.assertIn("POST", calls)
+        rewrite.assert_called_once()
+        restart.assert_called_once()
+
+    def test_bazarr_persist_failure_fails(self):
+        transport = FakeBazarrTransport({"sonarr": {"apikey": ""},
+                                         "radarr": {}, "general": {}})
+        with unittest.mock.patch.object(configure, "bazarr_request", transport), \
+             unittest.mock.patch.object(configure, "parse_bazarr_yaml",
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}), \
+             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml"), \
+             unittest.mock.patch.object(configure, "link_bazarr_via_file"), \
+             unittest.mock.patch.object(configure, "wait_for_bazarr_link",
+                                        return_value=False):
+            with self.assertRaises(SystemExit):
+                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml")
+
+    def test_root_folder_created_and_posted(self):
+        transport = FakeServarrTransport([])
+        configure.servarr_request = transport
+        counters = blank_counters()
+        configure.ensure_root_folder(configure.SONARR_BASE, "KEY",
+                                     "/data/media/Series", False, counters)
+        self.assertEqual(counters, {"created": 1, "updated": 0, "unchanged": 0})
+        posts = transport.writes()
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][1], "/api/v3/rootfolder")
+        self.assertEqual(posts[0][2], {"path": "/data/media/Series"})
+
+    def test_root_folder_present_unchanged_and_inaccessible_fails(self):
+        transport = FakeServarrTransport(
+            [{"path": "/data/media/Series", "accessible": True}])
+        configure.servarr_request = transport
+        counters = blank_counters()
+        configure.ensure_root_folder(configure.SONARR_BASE, "KEY",
+                                     "/data/media/Series/", False, counters)
+        self.assertEqual(counters["unchanged"], 1)
+        self.assertEqual(transport.writes(), [])
+        for bad in (False, 0):
+            transport = FakeServarrTransport(
+                [{"path": "/data/media/Series", "accessible": bad}])
+            configure.servarr_request = transport
+            with self.assertRaises(SystemExit):
+                configure.ensure_root_folder(configure.SONARR_BASE, "KEY",
+                                             "/data/media/Series", False,
+                                             blank_counters())
+
+    def test_download_client_updated_through_ensure(self):
+        stale = {"id": 3, "enable": True, "implementation": "QBittorrent",
+                 "fields": [{"name": "host", "value": "10.0.0.1"}]}
+        transport = FakeServarrTransport([stale])
+        configure.servarr_request = transport
+        counters = blank_counters()
+        configure.ensure_download_client("sonarr", configure.SONARR_BASE, "KEY",
+                                         HOST, 8090, "admin", "pw", False, counters)
+        self.assertEqual(counters, {"created": 0, "updated": 1, "unchanged": 0})
+        writes = transport.writes()
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][0], "PUT")
+        self.assertIn("/api/v3/downloadclient/3", writes[0][1])
+        self.assertEqual(configure.fields_map(writes[0][2])["host"], HOST)
+
+    def test_prowlarr_app_updated_through_ensure(self):
+        stale = {"id": 5, "implementation": "Sonarr", "enable": True,
+                 "fields": [{"name": "baseUrl", "value": "http://old:8989"}]}
+        transport = FakeServarrTransport([stale])
+        configure.servarr_request = transport
+        counters = blank_counters()
+        configure.ensure_prowlarr_app("sonarr", "PKEY", "SKEY", False, counters)
+        self.assertEqual(counters, {"created": 0, "updated": 1, "unchanged": 0})
+        writes = transport.writes()
+        self.assertEqual(len(writes), 1)
+        self.assertIn("/api/v1/applications/5", writes[0][1])
+        self.assertEqual(configure.fields_map(writes[0][2])["baseUrl"],
+                         configure.SONARR_BASE)
+
 
 class SummaryShapeTests(unittest.TestCase):
     def test_summary_keys_locked(self):
