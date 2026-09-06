@@ -133,6 +133,26 @@ prompt_tls() {
     esac
 }
 
+# Returns 0 when a guest carries <tag> in its Proxmox tags.
+# Usage: guest_has_tag ct 100 no-auto-proxy
+guest_has_tag() {
+    local tag_type="$1"
+    local tag_id="$2"
+    local wanted="$3"
+    local cfg=""
+
+    if [ "$tag_type" = "ct" ]; then
+        cfg=$(pct config "$tag_id" 2>/dev/null || true)
+    else
+        cfg=$(qm config "$tag_id" 2>/dev/null || true)
+    fi
+
+    local tags
+    tags=$(echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}')
+    [ -z "$tags" ] && return 1
+    echo "$tags" | grep -qiE "(^|[;, ])${wanted}([;, ]|$)"
+}
+
 # --- Collect all guests (containers + VMs, excluding caddy itself) ---
 GUEST_IDS=()
 GUEST_NAMES=()
@@ -147,6 +167,10 @@ while IFS= read -r cid; do
     name=$(pct config "$cid" 2>/dev/null | grep -oP 'hostname:\s*\K\S+')
     [ -z "$name" ] && continue
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
+    if guest_has_tag "ct" "$cid" "no-auto-proxy"; then
+        log_info "  Skipping LXC $cid ($name) — tagged no-auto-proxy"
+        continue
+    fi
 
     ip=$(get_container_ip "$cid")
     [ -z "$ip" ] && continue
@@ -165,6 +189,10 @@ while IFS= read -r vmid; do
     name=$(qm config "$vmid" 2>/dev/null | grep -oP '(?:hostname|name):\s*\K\S+')
     [ -z "$name" ] && continue
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
+    if guest_has_tag "vm" "$vmid" "no-auto-proxy"; then
+        log_info "  Skipping VM $vmid ($name) — tagged no-auto-proxy"
+        continue
+    fi
 
     if [ -n "${GUEST_IPS[$name]:-}" ]; then
         log_warning "  Skipping VM $vmid ($name) — name already used by another guest"
