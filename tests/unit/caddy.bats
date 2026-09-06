@@ -41,6 +41,34 @@ teardown() {
   grep -q "pct list" "$MOCK_LOG"
 }
 
+@test "caddy generate resolves caddy by exact name despite decoys" {
+  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n99         running                 mycaddy\n100        running                 caddy\n107        running                 jellyfin'
+  export MOCK_PCT_CONFIG_99="hostname: mycaddy"
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_107="hostname: jellyfin"
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST="VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID"
+  export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.7"
+  export MOCK_PCT_EXEC_SS_OUTPUT=$'State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess\nLISTEN 0     128          0.0.0.0:8096      0.0.0.0:*'
+
+  run bash -c "printf '\n\n' | bash \"$REPO_ROOT/caddy/generate-caddyfile.sh\" 2>&1"
+  [ "$status" -eq 0 ]
+  # Push and reload target the real caddy (100), never the decoy
+  /usr/bin/grep -q "pct push 100" "$MOCK_LOG"
+  ! /usr/bin/grep -q "pct push 99" "$MOCK_LOG"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+}
+
 # -------------------------------------------------------------------
 # caddy/update.sh
 # -------------------------------------------------------------------

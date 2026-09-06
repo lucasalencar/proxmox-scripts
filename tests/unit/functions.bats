@@ -358,8 +358,7 @@ create_temp_root() {
   [ "$output" = "10.0.0.5" ]
 }
 
-@test "get_container_ip falls back to pct config when exec returns empty" {
-  export MOCK_PCT_EXEC_HOSTNAME_I=""
+@test "get_container_ip falls back to pct config when exec returns empty" {  export MOCK_PCT_EXEC_HOSTNAME_I=""
   export MOCK_PCT_EXEC_OUTPUT=""
   export MOCK_PCT_EXEC_FAIL=1
   # For wait_container_ready we need pct exec true to succeed, so override
@@ -374,6 +373,57 @@ net0: name=eth0,bridge=vmbr0,ip=10.0.0.99/24,ip=10.0.0.99"
   run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_ip 101'
   # may return empty or 10.0.0.99 depending on mock config, just check it does not error
   [ "$status" -eq 0 ]
+}
+
+@test "get_container_ip prefers IPv4 when hostname lists IPv6 first" {
+  export MOCK_PCT_EXEC_HOSTNAME_I="fe80::1 10.0.0.6"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_ip 101'
+  [ "$status" -eq 0 ]
+  [ "$output" = "10.0.0.6" ]
+}
+
+@test "get_container_ip returns empty for DHCP placeholders" {
+  export MOCK_PCT_EXEC_HOSTNAME_I=" "
+  export MOCK_PCT_EXEC_OUTPUT=" "
+  export MOCK_PCT_CONFIG="hostname: test
+net0: name=eth0,bridge=vmbr0,ip=dhcp,ip6=dhcp"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_ip 101'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "get_vm_ip returns empty for DHCP placeholders" {
+  export MOCK_QM_GUEST_HOSTNAME_I=""
+  export MOCK_QM_GUEST_EXEC_OUTPUT='{"out-data": "", "exitcode": 0}'
+  export MOCK_QM_CONFIG="ipconfig0: ip=dhcp"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_vm_ip 200'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "is_valid_ipv4 accepts dotted decimals and rejects garbage" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 10.0.0.6 && echo ok || echo fail'
+  [ "$output" = "ok" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 "fe80::1" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 "10.0.0.5 evil" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 "" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+@test "prefer_ipv4 picks the first IPv4 token" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; prefer_ipv4 "fe80::1 10.0.0.6"'
+  [ "$output" = "10.0.0.6" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; result=$(prefer_ipv4 "fe80::1"); [ -z "$result" ] && echo empty'
+  [ "$output" = "empty" ]
+}
+
+@test "is_placeholder_ip detects dhcp auto manual" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_placeholder_ip dhcp && echo yes || echo no'
+  [ "$output" = "yes" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_placeholder_ip 10.0.0.5 && echo yes || echo no'
+  [ "$output" = "no" ]
 }
 
 # -------------------------------------------------------------------

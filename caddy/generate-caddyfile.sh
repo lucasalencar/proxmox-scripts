@@ -16,8 +16,8 @@ log_step "Caddyfile Generator for *.$DOMAIN"
 echo ""
 
 # --- Verify Caddy container exists ---
-CADDY_ID=$(get_container_id_by_name "$CADDY_CONTAINER_NAME")
-if [ -z "$CADDY_ID" ]; then
+CADDY_ID=$(get_container_id_by_exact_name "$CADDY_CONTAINER_NAME")
+if [ -z "$CADDY_ID" ] || ! is_valid_guest_id "$CADDY_ID"; then
     log_error "Caddy container not found. Run install.sh first."
     exit 1
 fi
@@ -100,15 +100,15 @@ remember_skipped_guest() {
     local skip_name="$1"
     local skip_ip="$2"
     local raw_ips="$3"
-    local token
+    local tokens token
 
     SKIPPED_NAMES+=("$skip_name")
     SKIPPED_IPS+=("$skip_ip")
+    tokens=$(echo "$raw_ips" | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' || true)
     # shellcheck disable=SC2086 # intentional word-splitting of whitespace-separated IPs
-    for token in $raw_ips; do
-        case "$token" in
-            [0-9]*.[0-9]*.[0-9]*.[0-9]*) SKIPPED_IPS+=("$token") ;;
-        esac
+    for token in $tokens; do
+        [ "$token" = "$skip_ip" ] && continue
+        SKIPPED_IPS+=("$token")
     done
 }
 
@@ -186,6 +186,7 @@ GUEST_IDS=()
 GUEST_NAMES=()
 GUEST_TYPES=()
 declare -A GUEST_IPS
+declare -A GUEST_RAW_IPS
 
 # --- Collect containers (LXC) ---
 while IFS= read -r cid; do
@@ -202,7 +203,10 @@ while IFS= read -r cid; do
     fi
 
     ip=$(get_container_ip "$cid")
-    [ -z "$ip" ] && continue
+    if ! is_valid_ipv4 "$ip"; then
+        log_warning "  Skipping LXC $cid ($name) — invalid IP '${ip:-none}'"
+        continue
+    fi
 
     GUEST_IDS+=("$cid")
     GUEST_NAMES+=("$name")
@@ -225,54 +229,65 @@ while IFS= read -r vmid; do
     fi
 
     json=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null)
-    ip=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | awk '{print $1}')
-    if [ -z "$ip" ]; then
+    raw_ips=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null)
+    if [ -z "$raw_ips" ]; then
         json=$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)
-        ip=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '^127\.' | head -1)
+        raw_ips=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '^127\.' | tr '\n' ' ')
     fi
+    if [ -z "$raw_ips" ]; then
+        raw_ips=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^,\s/]+' | head -1)
+        if is_placeholder_ip "$raw_ips"; then
+            raw_ips=""
+        fi
+    fi
+    ip=$(prefer_ipv4 "$raw_ips")
     if [ -z "$ip" ]; then
-        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^,\s/]+' | grep -v -E '^(dhcp|auto|manual)$' | head -1)
+        ip=$(echo "$raw_ips" | awk '{print $1}')
     fi
-    [ -z "$ip" ] && continue
+    if ! is_valid_ipv4 "$ip"; then
+        log_warning "  Skipping VM $vmid ($name) — invalid IP '${ip:-none}'"
+        continue
+    fi
 
     GUEST_IDS+=("$vmid")
     GUEST_NAMES+=("$name")
     GUEST_TYPES+=("vm")
     GUEST_IPS["$name"]="$ip"
+    GUEST_RAW_IPS["$name"]="$raw_ips"
 done < <(qm list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -n)
 
 # --- Partition out guests tagged no-auto-proxy (before any route decisions,
 # so excluded blocks can never be re-attached by IP reuse or stale entries) ---
-PART_IDS=()
-PART_NAMES=()
-PART_TYPES=()
+KEPT_IDS=()
+KEPT_NAMES=()
+KEPT_TYPES=()
 for i in "${!GUEST_IDS[@]}"; do
-    pname="${GUEST_NAMES[$i]}"
-    pgid="${GUEST_IDS[$i]}"
-    ptype="${GUEST_TYPES[$i]}"
-    pip="${GUEST_IPS[$pname]}"
-    if guest_has_tag "$ptype" "$pgid" "$NO_AUTO_PROXY_TAG"; then
-        if [ "$ptype" = "ct" ]; then
-            log_info "  Skipping LXC $pgid ($pname) — tagged $NO_AUTO_PROXY_TAG"
-            remember_skipped_guest "$pname" "$pip" "$(pct exec "$pgid" -- hostname -I 2>/dev/null || true)"
+    guest_name="${GUEST_NAMES[$i]}"
+    guest_id="${GUEST_IDS[$i]}"
+    guest_type="${GUEST_TYPES[$i]}"
+    guest_ip="${GUEST_IPS[$guest_name]}"
+    if guest_has_tag "$guest_type" "$guest_id" "$NO_AUTO_PROXY_TAG"; then
+        if [ "$guest_type" = "ct" ]; then
+            log_info "  Skipping LXC $guest_id ($guest_name) — tagged $NO_AUTO_PROXY_TAG"
+            remember_skipped_guest "$guest_name" "$guest_ip" "$(pct exec "$guest_id" -- hostname -I 2>/dev/null || true)"
         else
-            log_info "  Skipping VM $pgid ($pname) — tagged $NO_AUTO_PROXY_TAG"
-            remember_skipped_guest "$pname" "$pip" ""
+            log_info "  Skipping VM $guest_id ($guest_name) — tagged $NO_AUTO_PROXY_TAG"
+            remember_skipped_guest "$guest_name" "$guest_ip" "${GUEST_RAW_IPS[$guest_name]:-}"
         fi
         continue
     fi
-    PART_IDS+=("$pgid")
-    PART_NAMES+=("$pname")
-    PART_TYPES+=("$ptype")
+    KEPT_IDS+=("$guest_id")
+    KEPT_NAMES+=("$guest_name")
+    KEPT_TYPES+=("$guest_type")
 done
-if [ "${#PART_IDS[@]}" -eq 0 ]; then
+if [ "${#KEPT_IDS[@]}" -eq 0 ]; then
     GUEST_IDS=()
     GUEST_NAMES=()
     GUEST_TYPES=()
 else
-    GUEST_IDS=("${PART_IDS[@]}")
-    GUEST_NAMES=("${PART_NAMES[@]}")
-    GUEST_TYPES=("${PART_TYPES[@]}")
+    GUEST_IDS=("${KEPT_IDS[@]}")
+    GUEST_NAMES=("${KEPT_NAMES[@]}")
+    GUEST_TYPES=("${KEPT_TYPES[@]}")
 fi
 
 TOTAL=${#GUEST_NAMES[@]}
@@ -300,7 +315,7 @@ for i in $(seq 0 $((TOTAL - 1))); do
 
     if [ -n "$saved_services" ]; then
         log_info "  $CHECK $name $ARROW saved multi-service:"
-        added="n"
+        kept_saved_service="n"
         while IFS= read -r svc; do
             [ -z "$svc" ] && continue
             # Never re-attach a block that belongs to an excluded guest,
@@ -311,9 +326,9 @@ for i in $(seq 0 $((TOTAL - 1))); do
             fi
             log_info "    $CHECK $svc.$DOMAIN $ARROW $ip:${PORT_MAP[$svc]}"
             add_entry "$svc" "$ip" "${PORT_MAP[$svc]}"
-            added="y"
+            kept_saved_service="y"
         done <<< "$saved_services"
-        if [ "$added" = "y" ]; then
+        if [ "$kept_saved_service" = "y" ]; then
             if [ -n "${PORT_MAP[$name]:-}" ]; then
                 log_info "  $CHECK $name $ARROW saved port ${PORT_MAP[$name]}"
                 add_entry "$name" "$ip" "${PORT_MAP[$name]}"
@@ -334,12 +349,12 @@ for i in $(seq 0 $((TOTAL - 1))); do
     listening_ports=""
     if [ "$type" = "ct" ]; then
         if pct status "$gid" 2>/dev/null | grep -q "running"; then
-            listening_ports=$(pct exec "$gid" -- ss -tlnp 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+            listening_ports=$(pct exec "$gid" -- ss -tlnp 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | grep -E '^[0-9]+$' | sort -n | uniq)
         fi
     else
         if qm status "$gid" 2>/dev/null | grep -q "running"; then
             output=$(qm guest exec "$gid" -- ss -tlnp 2>/dev/null)
-            listening_ports=$(echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+            listening_ports=$(echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | grep -E '^[0-9]+$' | sort -n | uniq)
         fi
     fi
 

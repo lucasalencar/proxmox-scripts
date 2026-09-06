@@ -32,16 +32,16 @@ apply_tun_passthrough() {
     local live
     live=$(pct config "$id" 2>/dev/null || true)
 
-    local changed="n" entry
+    local tun_config_changed="n" entry
     for entry in "$TUN_CGROUP" "$TUN_MOUNT"; do
         if ! tun_entry_present "$entry" "$conf" "$live"; then
-            [ "$changed" = "n" ] && log_step "Adding TUN device passthrough to LXC config..."
+            [ "$tun_config_changed" = "n" ] && log_step "Adding TUN device passthrough to LXC config..."
             echo "$entry" >> "$conf"
-            changed="y"
+            tun_config_changed="y"
         fi
     done
 
-    if [ "$changed" = "y" ]; then
+    if [ "$tun_config_changed" = "y" ]; then
         log_step "Restarting container $id so /dev/net/tun appears..."
         pct stop "$id" 2>/dev/null || true
         pct start "$id"

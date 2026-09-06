@@ -141,6 +141,13 @@ EOF
       exit 0
     fi
 
+    if [[ "$*" == *"/tmp/upgrade.sh"* ]]; then
+      if [ "${MOCK_PCT_EXEC_UPGRADE_FAIL:-0}" = "1" ]; then
+        exit 1
+      fi
+      exit 0
+    fi
+
     if [[ "$*" == *"ss -tln"* ]]; then
       if [ -n "${MOCK_PCT_EXEC_SS_OUTPUT:-}" ]; then
         echo -e "$MOCK_PCT_EXEC_SS_OUTPUT"

@@ -212,14 +212,38 @@ get_vm_id_by_name() {
     '
 }
 
+# Prints the first IPv4 token in whitespace-separated input, or nothing.
+# hostname -I may list IPv6 first, and Caddy backends require IPv4 here.
+# Usage: ip=$(prefer_ipv4 "$hostname_I_output")
+prefer_ipv4() {
+    echo "${1:-}" | tr ' ' '\n' | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' | head -1
+}
+
+# Reports whether an address is a placeholder rather than a real IP
+# (DHCP/auto configuration markers from pct/qm config).
+# Usage: is_placeholder_ip "$ip" && ip=""
+is_placeholder_ip() {
+    case "${1:-}" in
+        dhcp|auto|manual) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Returns the primary IP of a VM via guest agent (fallback ipconfig from config)
 # Usage: vm_ip=$(get_vm_ip <vmid>)
 get_vm_ip() {
     local vmid="$1"
-    local ip
-    ip=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | jq -r '.["out-data"] // .["out"] // empty' | awk '{print $1}')
+    local ip raw
+    raw=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | jq -r '.["out-data"] // .["out"] // empty')
+    ip=$(prefer_ipv4 "$raw")
     if [ -z "$ip" ]; then
-        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^,\s/]+' | grep -v -E '^(dhcp|auto|manual)$' | head -1)
+        ip=$(echo "$raw" | awk '{print $1}')
+    fi
+    if [ -z "$ip" ]; then
+        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^,\s/]+' | head -1)
+        if is_placeholder_ip "$ip"; then
+            ip=""
+        fi
     fi
     echo "$ip"
 }
@@ -229,13 +253,20 @@ get_vm_ip() {
 # Usage: container_ip=$(get_container_ip <container_id>)
 get_container_ip() {
     local container_id="$1"
-    local ip
+    local ip raw
 
     wait_container_ready "$container_id" || return 1
 
-    ip=$(pct exec "$container_id" -- hostname -I 2>/dev/null | awk '{print $1}')
+    raw=$(pct exec "$container_id" -- hostname -I 2>/dev/null || true)
+    ip=$(prefer_ipv4 "$raw")
     if [ -z "$ip" ]; then
-        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^,\s/]+' | grep -v -E '^(dhcp|auto|manual)$')
+        ip=$(echo "$raw" | awk '{print $1}')
+    fi
+    if [ -z "$ip" ]; then
+        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^,\s/]+' | head -1)
+        if is_placeholder_ip "$ip"; then
+            ip=""
+        fi
     fi
 
     echo "$ip"
@@ -364,10 +395,10 @@ guest_has_tag() {
     echo ",${norm}," | grep -qF ",${wanted_lower},"
 }
 
-# Prints the normalized tag list of a guest: lowercase, comma-separated.
-# Fails when the kind is unknown (2) or the guest has no tags (1).
-# Usage: tags=$(get_guest_tags ct 100) || exit 1
-get_guest_tags() {
+# Prints the raw tag line value of a guest (case and separators preserved).
+# Single owner of the pct/qm tags-line format; fails (2) on unknown kind.
+# Usage: current=$(get_raw_guest_tags ct 100)
+get_raw_guest_tags() {
     local guest_kind="$1"
     local guest_id="$2"
     local cfg=""
@@ -375,13 +406,20 @@ get_guest_tags() {
     case "$guest_kind" in
         ct) cfg=$(pct config "$guest_id" 2>/dev/null || true) ;;
         vm) cfg=$(qm config "$guest_id" 2>/dev/null || true) ;;
-        *) log_error "get_guest_tags: unknown guest kind '$guest_kind'"; return 2 ;;
+        *) log_error "get_raw_guest_tags: unknown guest kind '$guest_kind'"; return 2 ;;
     esac
 
-    local tags norm
-    tags=$(echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}')
-    [ -z "$tags" ] && return 1
-    norm=$(echo "$tags" | tr '[:upper:]' '[:lower:]' | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
+    echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}'
+}
+
+# Prints the normalized tag list of a guest: lowercase, comma-separated.
+# Fails when the kind is unknown (2) or the guest has no tags (1).
+# Usage: tags=$(get_guest_tags ct 100) || exit 1
+get_guest_tags() {
+    local norm
+    norm=$(get_raw_guest_tags "$1" "$2") || return $?
+    [ -z "$norm" ] && return 1
+    norm=$(echo "$norm" | tr '[:upper:]' '[:lower:]' | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
     [ -z "$norm" ] && return 1
     echo "$norm"
 }
@@ -416,9 +454,9 @@ ensure_guest_tags() {
 
     # Raw fetch (case preserved) for the write path; matching stays in guest_has_tag.
     if [ "$guest_kind" = "ct" ]; then
-        current=$(pct config "$guest_id" 2>/dev/null | awk -F': ' '/^[Tt]ags:/ {print $2}')
+        current=$(get_raw_guest_tags "ct" "$guest_id")
     else
-        current=$(qm config "$guest_id" 2>/dev/null | awk -F': ' '/^[Tt]ags:/ {print $2}')
+        current=$(get_raw_guest_tags "vm" "$guest_id")
     fi
     normalized=$(echo "$current" | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
     new_tags="${normalized:+$normalized,}$missing"
@@ -436,6 +474,14 @@ ensure_guest_tags() {
 # Usage: is_valid_guest_id "$container_id" || exit 1
 is_valid_guest_id() {
     [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
+# Reports whether a string is a dotted-decimal IPv4 address.
+# Guest-reported addresses are a trust boundary: validate before writing
+# them into generated configs (e.g. Caddy backends).
+# Usage: is_valid_ipv4 "$ip" || continue
+is_valid_ipv4() {
+    [[ "${1:-}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
 }
 
 # Configures ZFS ACLs for specific users and enables inheritance

@@ -252,11 +252,33 @@ teardown() {
 
 @test "tailscale update fails when upgrade exec fails" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  export MOCK_PCT_EXEC_UPGRADE_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/update.sh" 2>&1
+  [ "$status" -ne 0 ]
+  /usr/bin/grep -q "pct exec 106 -- bash /tmp/upgrade.sh" "$MOCK_LOG"
+  [[ "$output" == *"Tailscale upgrade failed"* ]]
+}
+
+@test "tailscale update fails when tag reconciliation fails" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
   export MOCK_PCT_CONFIG="hostname: tailscale-router"
+  export MOCK_PCT_SET_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/update.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"required tags"* ]]
+}
+
+@test "tailscale update fails when container never becomes ready" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
   export MOCK_PCT_EXEC_FAIL=1
 
   run bash "$REPO_ROOT/tailscale/update.sh" 2>&1
   [ "$status" -ne 0 ]
+  [[ "$output" == *"not ready"* ]]
 }
 
 # -------------------------------------------------------------------
@@ -418,6 +440,23 @@ setup_sysroot() {
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -ne 0 ]
+}
+
+@test "tailscale upgrade fails when apt fails" {
+  export TAILSCALE_TUN_DEV=/dev/null
+  export MOCK_APT_GET_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -ne 0 ]
+}
+
+@test "tailscale upgrade fails when service dies after restart" {
+  export TAILSCALE_TUN_DEV=/dev/null
+  export MOCK_SYSTEMCTL_FAIL_SECOND_CHECK=1
+
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not active after upgrade"* ]]
 }
 
 # -------------------------------------------------------------------
