@@ -57,28 +57,14 @@ if ! [[ "$QBIT_PORT" =~ ^[0-9]+$ ]] || (( 10#$QBIT_PORT < 1 || 10#$QBIT_PORT > 6
     exit 1
 fi
 
-find_exact_container_id() {
-    local name="$1"
-    local ids
-    ids=$(pct list | awk -v target="$name" 'NR > 1 && $NF == target { print $1 }')
-    if [ -z "$ids" ]; then
-        return 1
-    fi
-    if [ "$(printf '%s\n' "$ids" | wc -l | tr -d ' ')" -ne 1 ]; then
-        log_error "Multiple containers have the exact name '$name'; refusing to choose one."
-        return 1
-    fi
-    printf '%s\n' "$ids"
-}
-
-starr_id=$(find_exact_container_id "starr")
+starr_id=$(get_exact_container_id_by_name "starr")
 if [ -z "$starr_id" ]; then
     log_error "Could not find container 'starr'. Run install.sh first."
     exit 1
 fi
 
 if [ -z "$QBIT_HOST" ]; then
-    qbit_id=$(find_exact_container_id "qbittorrent")
+    qbit_id=$(get_exact_container_id_by_name "qbittorrent")
     if [ -z "$qbit_id" ]; then
         log_error "Could not find container 'qbittorrent'. Run qbittorrent/install.sh first, or pass --qbit-host."
         exit 1
