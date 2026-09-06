@@ -258,3 +258,30 @@ EOF
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
   fi
 }
+
+@test "caddy generate skips guests tagged no-auto-proxy" {
+  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_106=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST="VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID"
+  export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.5"
+
+  run bash "$REPO_ROOT/caddy/generate-caddyfile.sh" </dev/null 2>&1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no-auto-proxy"* ]]
+  # Skipped guest must not gain a route or trigger a push
+  [ ! -f "$REPO_ROOT/caddy/Caddyfile.local" ]
+  ! /usr/bin/grep -q "pct push" "$MOCK_LOG"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+}

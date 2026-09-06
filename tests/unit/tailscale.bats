@@ -79,10 +79,19 @@ teardown() {
   run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
   [ "$status" -eq 0 ]
   run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
-  # Second run sees entries via pct config mock... entries come from the same
-  # mock, so conf must still hold exactly one copy of each line
+  [ "$status" -eq 0 ]
+  # Entries come from the same mock, so conf must still hold exactly one copy of each line
   [ "$(/usr/bin/grep -c "lxc.cgroup2.devices.allow" "$PVE_LXC_CONF_DIR/106.conf")" -eq 1 ]
   [ "$(/usr/bin/grep -c "lxc.mount.entry: /dev/net/tun" "$PVE_LXC_CONF_DIR/106.conf")" -eq 1 ]
+}
+
+@test "tailscale install fails when container creation fails" {
+  export MOCK_PCT_LIST="VMID       Status     Lock         Name"
+  export MOCK_PCT_CONFIG="hostname: test"
+  export MOCK_PCT_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/install.sh" 2>&1
+  [ "$status" -ne 0 ]
 }
 
 @test "tailscale install fails when provision push fails" {
@@ -117,6 +126,15 @@ teardown() {
   [[ "$output" == *"Could not find container"* ]]
 }
 
+@test "tailscale update fails when upgrade push fails" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG="hostname: tailscale-router"
+  export MOCK_PCT_PUSH_FAIL=1
+
+  run bash "$REPO_ROOT/tailscale/update.sh" 2>&1
+  [ "$status" -ne 0 ]
+}
+
 @test "tailscale update fails when upgrade exec fails" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
   export MOCK_PCT_CONFIG="hostname: tailscale-router"
@@ -134,6 +152,9 @@ teardown() {
   /usr/bin/grep -q "tailscale" "$REPO_ROOT/tailscale/container/provision.sh"
   /usr/bin/grep -q "ip_forward" "$REPO_ROOT/tailscale/container/provision.sh"
   /usr/bin/grep -q "systemctl enable" "$REPO_ROOT/tailscale/container/provision.sh"
+  # Signed apt repo, never pipe-to-shell
+  /usr/bin/grep -q "noarmor.gpg" "$REPO_ROOT/tailscale/container/provision.sh"
+  ! /usr/bin/grep -q "| sh" "$REPO_ROOT/tailscale/container/provision.sh"
   # Provision must not auto-login or embed credentials
   ! /usr/bin/grep -qi "authkey\|auth-key\|token" "$REPO_ROOT/tailscale/container/provision.sh"
   run bash -n "$REPO_ROOT/tailscale/container/provision.sh"
@@ -141,8 +162,11 @@ teardown() {
 }
 
 @test "tailscale container upgrade.sh refreshes package and checks service" {
-  /usr/bin/grep -q "tailscale" "$REPO_ROOT/tailscale/container/upgrade.sh"
+  /usr/bin/grep -q "only-upgrade" "$REPO_ROOT/tailscale/container/upgrade.sh"
   /usr/bin/grep -q "is-active" "$REPO_ROOT/tailscale/container/upgrade.sh"
+  /usr/bin/grep -q "ip_forward" "$REPO_ROOT/tailscale/container/upgrade.sh"
+  # Upgrade must refresh, never reinstall from scratch
+  ! /usr/bin/grep -q "| sh" "$REPO_ROOT/tailscale/container/upgrade.sh"
   run bash -n "$REPO_ROOT/tailscale/container/upgrade.sh"
   [ "$status" -eq 0 ]
 }

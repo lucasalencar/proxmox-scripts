@@ -18,6 +18,24 @@ LXC_CONF_DIR="${PVE_LXC_CONF_DIR:-/etc/pve/lxc}"
 TUN_CGROUP="lxc.cgroup2.devices.allow: c 10:200 rwm"
 TUN_MOUNT="lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
 
+# Ensures one LXC config line is present (checks live config, then the conf file).
+# Returns 1 when the line was added, so callers can restart on change.
+# Usage: ensure_tun_entry <line> <conf_file> <live_config> || changed="y"
+ensure_tun_entry() {
+    local line="$1"
+    local conf="$2"
+    local live="$3"
+
+    if echo "$live" | grep -qF "$line"; then
+        return 0
+    fi
+    if [ -f "$conf" ] && grep -qF "$line" "$conf"; then
+        return 0
+    fi
+    echo "$line" >> "$conf"
+    return 1
+}
+
 log_step "Starting Tailscale subnet router installation (dedicated LXC)..."
 
 # --- 1. Create / find container ---
@@ -55,20 +73,9 @@ conf_file="$LXC_CONF_DIR/${container_id}.conf"
 tun_changed="n"
 current_config=$(pct config "$container_id" 2>/dev/null || true)
 
-if ! echo "$current_config" | grep -qF "$TUN_CGROUP"; then
-    if [ ! -f "$conf_file" ] || ! grep -qF "$TUN_CGROUP" "$conf_file"; then
-        log_step "Adding TUN device passthrough to LXC config..."
-        echo "$TUN_CGROUP" >> "$conf_file"
-    fi
-    tun_changed="y"
-fi
-
-if ! echo "$current_config" | grep -qF "$TUN_MOUNT"; then
-    if ! grep -qF "$TUN_MOUNT" "$conf_file" 2>/dev/null; then
-        echo "$TUN_MOUNT" >> "$conf_file"
-    fi
-    tun_changed="y"
-fi
+log_step "Ensuring TUN device passthrough in LXC config..."
+ensure_tun_entry "$TUN_CGROUP" "$conf_file" "$current_config" || tun_changed="y"
+ensure_tun_entry "$TUN_MOUNT" "$conf_file" "$current_config" || tun_changed="y"
 
 if [ "$tun_changed" = "y" ]; then
     log_step "Restarting container $container_id so /dev/net/tun appears..."
@@ -78,12 +85,13 @@ if [ "$tun_changed" = "y" ]; then
 else
     log_info "TUN passthrough already present — skipping restart"
     pct start "$container_id" 2>/dev/null || true
+    wait_container_ready "$container_id" || { log_error "Container $container_id not ready"; exit 1; }
 fi
 
 # --- 3. Tags (append, never overwrite) ---
 current_tags=$(pct config "$container_id" 2>/dev/null | awk -F': ' '/^tags:/ {print $2}')
 if [[ "$current_tags" != *"tailscale"* ]]; then
-    new_tags="${current_tags:+$current_tags,}tailscale,router"
+    new_tags="${current_tags:+$current_tags,}tailscale,router,no-auto-proxy"
     pct set "$container_id" --tags "$new_tags" 2>/dev/null || log_warning "Could not set tags on $container_id"
 fi
 

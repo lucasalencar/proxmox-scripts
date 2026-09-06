@@ -26,7 +26,7 @@ See `tailscale/update.sh` for details.
 
 ## Ports & Caddy
 
-This package exposes nothing publicly and must be excluded from automatic Caddy publishing (tag `tailscale,router`, single-purpose guest). Remote access happens only through the tailnet; see `docs/tailscale-plan.md` for the deny-by-default ACL model.
+This package exposes nothing publicly. The install tags the guest `tailscale,router,no-auto-proxy`, and `caddy/generate-caddyfile.sh` skips any guest carrying `no-auto-proxy`, so the router can never gain a public route by accident. Remote access happens only through the tailnet; see `docs/tailscale-plan.md` for the deny-by-default ACL model.
 
 ## Folder Structure
 
