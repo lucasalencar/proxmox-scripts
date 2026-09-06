@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 log() { echo "[tailscale-provision] $*"; }
@@ -8,8 +8,15 @@ log "Installing base dependencies..."
 apt-get update
 apt-get install -y ca-certificates curl gnupg
 
-log "Installing Tailscale from the official repository..."
-curl -fsSL https://tailscale.com/install.sh | sh
+log "Adding the official Tailscale apt repository (signed)..."
+. /etc/os-release
+install -m 0755 -d /usr/share/keyrings
+curl -fsSL "https://pkgs.tailscale.com/stable/${ID}/${VERSION_CODENAME}.noarmor.gpg" -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+curl -fsSL "https://pkgs.tailscale.com/stable/${ID}/${VERSION_CODENAME}.tailscale-keyring.list" -o /etc/apt/sources.list.d/tailscale.list
+
+log "Installing Tailscale..."
+apt-get update
+apt-get install -y tailscale
 
 log "Enabling IP forwarding for subnet routing..."
 cat >/etc/sysctl.d/99-tailscale.conf <<EOF

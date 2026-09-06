@@ -123,11 +123,15 @@ Done when: the LXC is up, reachable, and still empty.
 
 The subnet router runs in an existing LXC. Tailscale needs `/dev/net/tun`, which an LXC lacks by default; the script below adds the host-side passthrough and installs the package.
 
-`RUN ON THE PROXMOX HOST` (review the script source first: `tools/addon/add-tailscale-lxc.sh` in community-scripts/ProxmoxVE):
+`RUN ON THE PROXMOX HOST`. Pin the script to the reviewed commit SHA instead of the mutable `main` ref, and verify the download before executing (review the script source first: `tools/addon/add-tailscale-lxc.sh` in community-scripts/ProxmoxVE):
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/addon/add-tailscale-lxc.sh)"
+curl -fsSL -o /tmp/add-tailscale-lxc.sh https://raw.githubusercontent.com/community-scripts/ProxmoxVE/08fdd8875172abcd3c167f13a00bdb65fcb0e61e/tools/addon/add-tailscale-lxc.sh
+sha256sum /tmp/add-tailscale-lxc.sh
+bash /tmp/add-tailscale-lxc.sh
 ```
+
+Compare the printed hash with the value recorded when you reviewed that exact commit; abort on any mismatch. As an extra check, read through `/tmp/add-tailscale-lxc.sh` before executing it, so you run exactly the bytes you reviewed. Re-resolve the SHA if the upstream file changes, and re-review before adopting a new pin.
 
 What the script does:
 
