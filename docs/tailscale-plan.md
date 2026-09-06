@@ -68,7 +68,7 @@ Steps:
 - [ ] List your devices: laptop, phone, server node.
 - [ ] Record the exact home LAN CIDR, for example `192.168.15.0/24`.
 - [ ] Record AdGuard/LAN DNS IP and the zones it serves (`marx.home`).
-- [ ] Decide which existing LXC will host the subnet router (Tailscale runs there via the community script in section 1.2).
+- [ ] Decide which dedicated, otherwise empty LXC will host the subnet router (single-purpose guest; never co-locate it with another service).
 - [ ] Decide the colleague list and which service:port each one may reach.
 - [ ] Record the MTST boundary: the future team VM lives on a separate segment and is not part of these routes.
 
@@ -131,7 +131,13 @@ sha256sum /tmp/add-tailscale-lxc.sh
 bash /tmp/add-tailscale-lxc.sh
 ```
 
-Compare the printed hash with the value recorded when you reviewed that exact commit; abort on any mismatch. As an extra check, read through `/tmp/add-tailscale-lxc.sh` before executing it, so you run exactly the bytes you reviewed. Re-resolve the SHA if the upstream file changes, and re-review before adopting a new pin.
+The expected hash for that pinned commit is:
+
+```text
+ad8d26f949974a7611f9ed8a0cac7b3d83ac217546c3adbb434afbe4d3532617  /tmp/add-tailscale-lxc.sh
+```
+
+Abort on any mismatch. As an extra check, read through `/tmp/add-tailscale-lxc.sh` before executing it, so you run exactly the bytes you reviewed. Re-resolve the SHA if the upstream file changes, and re-review before adopting a new pin.
 
 What the script does:
 

@@ -64,6 +64,9 @@ SAVED_NAMES=("${!PORT_MAP[@]}")
 FINAL_NAMES=()
 FINAL_IPS=()
 
+# IPs of guests skipped via no-auto-proxy (stale blocks for these are dropped)
+SKIPPED_IPS=()
+
 # Records one output entry (creates or updates the subdomain mapping)
 add_entry() {
     local entry_name="$1"
@@ -133,26 +136,6 @@ prompt_tls() {
     esac
 }
 
-# Returns 0 when a guest carries <tag> in its Proxmox tags.
-# Usage: guest_has_tag ct 100 no-auto-proxy
-guest_has_tag() {
-    local tag_type="$1"
-    local tag_id="$2"
-    local wanted="$3"
-    local cfg=""
-
-    if [ "$tag_type" = "ct" ]; then
-        cfg=$(pct config "$tag_id" 2>/dev/null || true)
-    else
-        cfg=$(qm config "$tag_id" 2>/dev/null || true)
-    fi
-
-    local tags
-    tags=$(echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}')
-    [ -z "$tags" ] && return 1
-    echo "$tags" | grep -qiE "(^|[;, ])${wanted}([;, ]|$)"
-}
-
 # --- Collect all guests (containers + VMs, excluding caddy itself) ---
 GUEST_IDS=()
 GUEST_NAMES=()
@@ -167,13 +150,14 @@ while IFS= read -r cid; do
     name=$(pct config "$cid" 2>/dev/null | grep -oP 'hostname:\s*\K\S+')
     [ -z "$name" ] && continue
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
-    if guest_has_tag "ct" "$cid" "no-auto-proxy"; then
-        log_info "  Skipping LXC $cid ($name) — tagged no-auto-proxy"
-        continue
-    fi
 
     ip=$(get_container_ip "$cid")
     [ -z "$ip" ] && continue
+    if guest_has_tag "ct" "$cid" "no-auto-proxy"; then
+        log_info "  Skipping LXC $cid ($name) — tagged no-auto-proxy"
+        SKIPPED_IPS+=("$ip")
+        continue
+    fi
 
     GUEST_IDS+=("$cid")
     GUEST_NAMES+=("$name")
@@ -189,10 +173,6 @@ while IFS= read -r vmid; do
     name=$(qm config "$vmid" 2>/dev/null | grep -oP '(?:hostname|name):\s*\K\S+')
     [ -z "$name" ] && continue
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
-    if guest_has_tag "vm" "$vmid" "no-auto-proxy"; then
-        log_info "  Skipping VM $vmid ($name) — tagged no-auto-proxy"
-        continue
-    fi
 
     if [ -n "${GUEST_IPS[$name]:-}" ]; then
         log_warning "  Skipping VM $vmid ($name) — name already used by another guest"
@@ -209,6 +189,11 @@ while IFS= read -r vmid; do
         ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^/]+' | head -1)
     fi
     [ -z "$ip" ] && continue
+    if guest_has_tag "vm" "$vmid" "no-auto-proxy"; then
+        log_info "  Skipping VM $vmid ($name) — tagged no-auto-proxy"
+        SKIPPED_IPS+=("$ip")
+        continue
+    fi
 
     GUEST_IDS+=("$vmid")
     GUEST_NAMES+=("$name")
@@ -378,6 +363,21 @@ echo ""
             fi
         done
         if [ "$is_final" = "n" ]; then
+            # Drop stale blocks that belong to a guest tagged no-auto-proxy:
+            # keeping them would silently re-publish a guest the operator excluded.
+            saved_ip="${IP_MAP[$saved]:-}"
+            dropped="n"
+            for skip_ip in "${SKIPPED_IPS[@]:-}"; do
+                [ -z "$skip_ip" ] && continue
+                if [ -n "$saved_ip" ] && [ "$saved_ip" = "$skip_ip" ]; then
+                    dropped="y"
+                    break
+                fi
+            done
+            if [ "$dropped" = "y" ]; then
+                log_warning "  Dropping stale block $saved.$DOMAIN ($saved_ip) — guest tagged no-auto-proxy" >&2
+                continue
+            fi
             log_warning "  Preserving unmanaged block $saved.$DOMAIN (${IP_MAP[$saved]:-unknown}:${PORT_MAP[$saved]:-unknown})" >&2
             if [ "${TLS_MAP[$saved]:-http}" = "https" ]; then
                 echo "$saved.$DOMAIN {"

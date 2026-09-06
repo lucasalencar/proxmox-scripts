@@ -333,6 +333,35 @@ get_container_id_by_name() {
     pct list | grep -F -i -- "$name" | sort -n | tail -1 | awk '{print $1}'
 }
 
+# Returns the container ID by exact hostname match (case-insensitive).
+# Unlike get_container_id_by_name, similar names never collide.
+# Usage: get_container_id_by_exact_name "tailscale-router"
+get_container_id_by_exact_name() {
+    local name="$1"
+    [ -z "$name" ] && return 1
+    pct list | awk -v n="$name" 'NR>1 && tolower($NF) == tolower(n) {print $1; exit}'
+}
+
+# Returns 0 when a guest carries <tag> in its Proxmox tags (token match).
+# Usage: guest_has_tag ct 100 no-auto-proxy
+guest_has_tag() {
+    local guest_kind="$1"
+    local guest_id="$2"
+    local wanted="$3"
+    local cfg=""
+
+    case "$guest_kind" in
+        ct) cfg=$(pct config "$guest_id" 2>/dev/null || true) ;;
+        vm) cfg=$(qm config "$guest_id" 2>/dev/null || true) ;;
+        *) log_error "guest_has_tag: unknown guest kind '$guest_kind'"; return 2 ;;
+    esac
+
+    local tags
+    tags=$(echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}')
+    [ -z "$tags" ] && return 1
+    echo "$tags" | grep -qiE "(^|[;, ])${wanted}([;, ]|$)"
+}
+
 # Configures ZFS ACLs for specific users and enables inheritance
 # Usage: setup_dataset_acls <dataset_name> <mount_path> <owner_uid> [extra_uids...]
 setup_dataset_acls() {

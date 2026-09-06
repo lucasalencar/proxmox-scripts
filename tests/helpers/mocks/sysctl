@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Mock for sysctl — values controlled via env vars, -p always succeeds.
+set -euo pipefail
+
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "sysctl" "$@"
+
+case "${1:-}" in
+  -n)
+    case "${2:-}" in
+      net.ipv4.ip_forward) echo "${MOCK_SYSCTL_IP_FORWARD:-1}" ;;
+      net.ipv6.conf.all.forwarding) echo "${MOCK_SYSCTL_IPV6_FORWARDING:-1}" ;;
+      *) echo "1" ;;
+    esac
+    exit 0
+    ;;
+  -p)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Mock for apt-get — logs and succeeds (or fails via MOCK_APT_GET_FAIL).
+set -euo pipefail
+
+source "$(dirname "$0")/../mock_lib.sh"
+mock_log "apt-get" "$@"
+
+if [ "${MOCK_APT_GET_FAIL:-0}" = "1" ]; then
+  exit 1
+fi
+exit 0
