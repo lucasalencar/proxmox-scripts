@@ -39,6 +39,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install YAML dependency used by starr tests
+        run: pip install -q "ruamel.yaml>=0.18,<0.19"
       - name: Run Python unit tests
         # Convention: every test_*.py is self-contained (bootstraps its own
         # sys.path) and runnable directly, so new packages are picked up
