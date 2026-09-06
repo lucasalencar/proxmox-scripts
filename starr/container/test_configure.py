@@ -357,6 +357,20 @@ class BazarrLinkingTests(unittest.TestCase):
         form = configure.bazarr_settings_form("SKEY", "RKEY")
         self.assertEqual(form["settings-general-use_sonarr"], "true")
         self.assertEqual(form["settings-sonarr-port"], str(configure.SONARR_PORT))
+        self.assertEqual(form, {
+            "settings-sonarr-ip": "127.0.0.1",
+            "settings-sonarr-port": str(configure.SONARR_PORT),
+            "settings-sonarr-base_url": "",
+            "settings-sonarr-ssl": "false",
+            "settings-sonarr-apikey": "SKEY",
+            "settings-radarr-ip": "127.0.0.1",
+            "settings-radarr-port": str(configure.RADARR_PORT),
+            "settings-radarr-base_url": "",
+            "settings-radarr-ssl": "false",
+            "settings-radarr-apikey": "RKEY",
+            "settings-general-use_sonarr": "true",
+            "settings-general-use_radarr": "true",
+        })
 
 
 class FixtureCrossCheckTests(unittest.TestCase):

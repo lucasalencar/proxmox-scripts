@@ -456,22 +456,19 @@ def normalize_bazarr_base_url(value: Any) -> str:
     return "" if value in (None, "", "/") else str(value).rstrip("/")
 
 
+def _bazarr_form_value(value: Any) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return str(value)
+
+
 def bazarr_settings_form(sonarr_key: str, radarr_key: str) -> Dict[str, str]:
     desired = desired_bazarr_settings(sonarr_key, radarr_key)
-    return {
-        "settings-sonarr-ip": desired["sonarr"]["ip"],
-        "settings-sonarr-port": str(desired["sonarr"]["port"]),
-        "settings-sonarr-base_url": desired["sonarr"]["base_url"],
-        "settings-sonarr-ssl": "false",
-        "settings-sonarr-apikey": desired["sonarr"]["apikey"],
-        "settings-radarr-ip": desired["radarr"]["ip"],
-        "settings-radarr-port": str(desired["radarr"]["port"]),
-        "settings-radarr-base_url": desired["radarr"]["base_url"],
-        "settings-radarr-ssl": "false",
-        "settings-radarr-apikey": desired["radarr"]["apikey"],
-        "settings-general-use_sonarr": "true",
-        "settings-general-use_radarr": "true",
-    }
+    return {"settings-%s-%s" % (section, key): _bazarr_form_value(value)
+            for section, values in desired.items()
+            for key, value in values.items()}
 
 
 def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> None:
