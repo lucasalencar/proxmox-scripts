@@ -30,6 +30,7 @@ Some services include an `update.sh` to keep them up to date via the host CLI:
 *   **casa-os/**: Installs CasaOS LXC and mounts Media, Gallery, and Documents.
 *   **jellyfin/**: Installs Jellyfin LXC, configures ACLs, and mounts Media.
 *   **home-assistant-os/**: Installs Home Assistant OS as a VM.
+*   **tailscale/**: Installs a dedicated `tailscale-router` LXC (TUN passthrough, no public exposure) for VPN-only remote access.
 
 ## Setup Order
 
