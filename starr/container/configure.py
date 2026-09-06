@@ -315,7 +315,7 @@ def ensure_root_folder(base: str, api_key: str, path: str,
         existing_path = (folder.get("path") or "").rstrip("/") or "/"
         if existing_path != wanted_path:
             continue
-        if folder.get("accessible") is False:
+        if folder.get("accessible") == False:
             fail("root folder %s is not accessible; check the /data mount" % path)
         counters["unchanged"] += 1
         log("root folder %s already present" % path)
@@ -517,7 +517,7 @@ def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str)
             and all((normalize_bazarr_base_url(radarr.get(key, ""))
                      if key == "base_url" else radarr.get(key, "")) == value
                     for key, value in desired["radarr"].items())
-            and all(general.get(key) is value for key, value in desired["general"].items()))
+            and all(general.get(key) == value for key, value in desired["general"].items()))
 
 
 def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:

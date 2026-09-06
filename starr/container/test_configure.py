@@ -347,6 +347,9 @@ class BazarrLinkingTests(unittest.TestCase):
         slash = dict(linked)
         slash["sonarr"] = dict(linked["sonarr"], base_url="/")
         self.assertTrue(configure.is_bazarr_linked(slash, "SKEY", "RKEY"))
+        int_flags = dict(linked)
+        int_flags["general"] = {"use_sonarr": 1, "use_radarr": 1}
+        self.assertTrue(configure.is_bazarr_linked(int_flags, "SKEY", "RKEY"))
         self.assertFalse(
             configure.is_bazarr_linked({"sonarr": {"apikey": ""}}, "SKEY", "RKEY"))
 
