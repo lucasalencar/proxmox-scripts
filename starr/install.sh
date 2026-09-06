@@ -8,7 +8,7 @@ require_root
 log_step "Starting Starr stack installation (Prowlarr + Sonarr + Radarr + Bazarr) — single LXC..."
 
 # --- 1. Create / find container ---
-container_id=$(get_container_id_by_name "starr")
+container_id=$(get_exact_container_id_by_name "starr")
 
 if [ -z "$container_id" ]; then
     # Single CT runs 4 apps — resources are shared
