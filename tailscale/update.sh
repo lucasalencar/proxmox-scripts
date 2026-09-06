@@ -14,7 +14,7 @@ if [ -z "$container_id" ]; then
     log_error "Could not find container '$CONTAINER_NAME'. Run install.sh first."
     exit 1
 fi
-if ! [[ "$container_id" =~ ^[0-9]+$ ]]; then
+if ! is_valid_guest_id "$container_id"; then
     log_error "Refusing to operate on unexpected container ID '$container_id'"
     exit 1
 fi
@@ -26,6 +26,10 @@ if ! ensure_guest_tags "ct" "$container_id" "$REQUIRED_TAGS"; then
     log_error "Failed to apply required tags ($REQUIRED_TAGS) on $container_id"
     exit 1
 fi
+
+log_step "Ensuring container $container_id is running..."
+pct start "$container_id" 2>/dev/null || true
+wait_container_ready "$container_id" || { log_error "Container $container_id not ready"; exit 1; }
 
 log_step "Upgrading Tailscale inside container $container_id..."
 if ! exec_script_in_container "$container_id" "$SCRIPT_DIR/container/upgrade.sh"; then

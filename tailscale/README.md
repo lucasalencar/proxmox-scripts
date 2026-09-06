@@ -47,7 +47,9 @@ tailscale/
 Login is manual and never automated (no auth keys or tokens in scripts):
 
 ```bash
-CTID=$(pct list | awk 'tolower($NF) == "tailscale-router" {print $1}')
+source common/functions.sh
+source tailscale/config.sh
+CTID=$(get_container_id_by_exact_name "$CONTAINER_NAME")
 pct exec "$CTID" -- tailscale up
 pct exec "$CTID" -- tailscale set --advertise-routes=<LAN-CIDR>
 ```
@@ -57,7 +59,9 @@ Then approve the route in the Tailscale admin console. Full verification checkli
 ## Verification
 
 ```bash
-CTID=$(pct list | awk 'tolower($NF) == "tailscale-router" {print $1}')
+source common/functions.sh
+source tailscale/config.sh
+CTID=$(get_container_id_by_exact_name "$CONTAINER_NAME")
 pct config "$CTID" | grep -E "lxc.cgroup2.devices.allow|lxc.mount.entry: /dev/net/tun"
 pct exec "$CTID" -- test -c /dev/net/tun && echo "TUN device present"
 pct exec "$CTID" -- systemctl is-active tailscaled
@@ -65,4 +69,4 @@ pct exec "$CTID" -- systemctl is-active tailscaled
 
 ## Resources
 
-- Default: 1 core / 512 MB / 8 GB. Adjust `CT_CORES`/`CT_MEMORY`/`CT_DISK`/`CT_SWAP` in `tailscale/install.sh` if needed.
+- Default: 1 core / 512 MB / 8 GB. Adjust `CT_CORES`/`CT_MEMORY`/`CT_DISK`/`CT_SWAP`/`DEBIAN_VERSION` in `tailscale/config.sh` if needed.

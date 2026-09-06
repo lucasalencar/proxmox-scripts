@@ -368,6 +368,8 @@ setup_sysroot() {
 }
 
 @test "tailscale upgrade executes, restarts service and verifies forwarding" {
+  export TAILSCALE_TUN_DEV=/dev/null
+
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -eq 0 ]
   /usr/bin/grep -q "apt-get install --only-upgrade -y tailscale" "$MOCK_LOG"
@@ -377,6 +379,7 @@ setup_sysroot() {
 
 @test "tailscale upgrade starts an inactive service" {
   export MOCK_SYSTEMCTL_ACTIVE=1
+  export TAILSCALE_TUN_DEV=/dev/null
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -eq 0 ]
@@ -385,6 +388,7 @@ setup_sysroot() {
 
 @test "tailscale upgrade fails when IPv4 forwarding is off" {
   export MOCK_SYSCTL_IP_FORWARD=0
+  export TAILSCALE_TUN_DEV=/dev/null
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -ne 0 ]
@@ -393,14 +397,24 @@ setup_sysroot() {
 
 @test "tailscale upgrade fails when IPv6 forwarding is off" {
   export MOCK_SYSCTL_IPV6_FORWARDING=0
+  export TAILSCALE_TUN_DEV=/dev/null
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -ne 0 ]
   [[ "$output" == *"forwarding is disabled"* ]]
 }
 
+@test "tailscale upgrade fails when TUN device is missing" {
+  export TAILSCALE_TUN_DEV="$MOCK_TMPDIR/no-tun"
+
+  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"TUN"* ]]
+}
+
 @test "tailscale upgrade fails when service control fails" {
   export MOCK_SYSTEMCTL_FAIL=1
+  export TAILSCALE_TUN_DEV=/dev/null
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -ne 0 ]
@@ -409,6 +423,19 @@ setup_sysroot() {
 # -------------------------------------------------------------------
 # tailscale/README.md — usage docs
 # -------------------------------------------------------------------
+
+@test "tailscale config keeps single-source identity" {
+  run bash -c 'source "$REPO_ROOT/tailscale/config.sh"; echo "$CONTAINER_NAME|$REQUIRED_TAGS"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "tailscale-router|tailscale,router,no-auto-proxy" ]
+  # REQUIRED_TAGS is consumed with comma-splitting: no other separators allowed
+  ! /usr/bin/grep -qE '^REQUIRED_TAGS=.*[; ]' "$REPO_ROOT/tailscale/config.sh"
+}
+
+@test "tailscale host scripts never handle credentials" {
+  ! /usr/bin/grep -qiE "authkey|auth-key|token|secret|password" "$REPO_ROOT/tailscale/install.sh"
+  ! /usr/bin/grep -qiE "authkey|auth-key|token|secret|password" "$REPO_ROOT/tailscale/update.sh"
+}
 
 @test "tailscale README documents install and update commands" {
   /usr/bin/grep -q "tailscale/install.sh" "$REPO_ROOT/tailscale/README.md"

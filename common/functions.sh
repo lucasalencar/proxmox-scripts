@@ -219,7 +219,7 @@ get_vm_ip() {
     local ip
     ip=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | jq -r '.["out-data"] // .["out"] // empty' | awk '{print $1}')
     if [ -z "$ip" ]; then
-        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^/]+' | head -1)
+        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^,\s/]+' | grep -v -E '^(dhcp|auto|manual)$' | head -1)
     fi
     echo "$ip"
 }
@@ -235,7 +235,7 @@ get_container_ip() {
 
     ip=$(pct exec "$container_id" -- hostname -I 2>/dev/null | awk '{print $1}')
     if [ -z "$ip" ]; then
-        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^\s/]+' | grep -v '^dhcp$')
+        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^,\s/]+' | grep -v -E '^(dhcp|auto|manual)$')
     fi
 
     echo "$ip"
@@ -342,6 +342,11 @@ get_container_id_by_exact_name() {
     pct list | awk -v n="$name" 'NR>1 && tolower($NF) == tolower(n) {print $1; exit}'
 }
 
+# Tag that excludes a guest from automatic Caddy publishing.
+# Single source for the generator and every package that needs it.
+# shellcheck disable=SC2034 # consumed cross-file by caddy/generate-caddyfile.sh
+NO_AUTO_PROXY_TAG="no-auto-proxy"
+
 # Returns 0 when a guest carries <tag> in its Proxmox tags (whole-token match).
 # Separators comma, semicolon and space are all honored; matching is
 # case-insensitive and fixed-string (no regex), so metacharacters are safe.
@@ -350,22 +355,35 @@ guest_has_tag() {
     local guest_kind="$1"
     local guest_id="$2"
     local wanted="$3"
-    local cfg=""
 
     [ -z "$wanted" ] && return 1
-    case "$guest_kind" in
-        ct) cfg=$(pct config "$guest_id" 2>/dev/null || true) ;;
-        vm) cfg=$(qm config "$guest_id" 2>/dev/null || true) ;;
-        *) log_error "guest_has_tag: unknown guest kind '$guest_kind'"; return 2 ;;
-    esac
-
-    local tags norm wanted_lower
-    tags=$(echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}')
-    [ -z "$tags" ] && return 1
-    norm=$(echo "$tags" | tr '[:upper:]' '[:lower:]' | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
+    local norm wanted_lower
+    norm=$(get_guest_tags "$guest_kind" "$guest_id") || return $?
     wanted_lower=$(echo "$wanted" | tr '[:upper:]' '[:lower:]')
     [ -z "$norm" ] && return 1
     echo ",${norm}," | grep -qF ",${wanted_lower},"
+}
+
+# Prints the normalized tag list of a guest: lowercase, comma-separated.
+# Fails when the kind is unknown (2) or the guest has no tags (1).
+# Usage: tags=$(get_guest_tags ct 100) || exit 1
+get_guest_tags() {
+    local guest_kind="$1"
+    local guest_id="$2"
+    local cfg=""
+
+    case "$guest_kind" in
+        ct) cfg=$(pct config "$guest_id" 2>/dev/null || true) ;;
+        vm) cfg=$(qm config "$guest_id" 2>/dev/null || true) ;;
+        *) log_error "get_guest_tags: unknown guest kind '$guest_kind'"; return 2 ;;
+    esac
+
+    local tags norm
+    tags=$(echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}')
+    [ -z "$tags" ] && return 1
+    norm=$(echo "$tags" | tr '[:upper:]' '[:lower:]' | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
+    [ -z "$norm" ] && return 1
+    echo "$norm"
 }
 
 # Ensures a guest carries every tag in a comma-separated list. Missing tags
@@ -396,6 +414,7 @@ ensure_guest_tags() {
     done
     [ -z "$missing" ] && return 0
 
+    # Raw fetch (case preserved) for the write path; matching stays in guest_has_tag.
     if [ "$guest_kind" = "ct" ]; then
         current=$(pct config "$guest_id" 2>/dev/null | awk -F': ' '/^[Tt]ags:/ {print $2}')
     else
@@ -409,6 +428,14 @@ ensure_guest_tags() {
     else
         qm set "$guest_id" --tags "$new_tags" 2>/dev/null
     fi
+}
+
+# Reports whether a guest ID looks like a Proxmox numeric ID.
+# Tool output (pct list, pvesh nextid) is a trust boundary: validate before
+# using it in paths or commands.
+# Usage: is_valid_guest_id "$container_id" || exit 1
+is_valid_guest_id() {
+    [[ "${1:-}" =~ ^[0-9]+$ ]]
 }
 
 # Configures ZFS ACLs for specific users and enables inheritance

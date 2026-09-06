@@ -243,6 +243,42 @@ create_temp_root() {
   [[ "$output" == *"exit:2"* ]]
 }
 
+@test "guest_has_tag matches VM tags from qm config" {
+  export MOCK_QM_CONFIG_201=$'hostname: vmrouter\nTags: vpn;No-Auto-Proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vm 201 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "yes" ]
+}
+
+@test "guest_has_tag rejects substring matches on VMs" {
+  export MOCK_QM_CONFIG_201=$'hostname: vmrouter\ntags: my-no-auto-proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vm 201 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag fails for VMs without tags" {
+  export MOCK_QM_CONFIG_201="hostname: vmrouter"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vm 201 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+# -------------------------------------------------------------------
+# is_valid_guest_id
+# -------------------------------------------------------------------
+
+@test "is_valid_guest_id accepts numeric IDs" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id 106 && echo ok || echo fail'
+  [ "$output" = "ok" ]
+}
+
+@test "is_valid_guest_id rejects paths and empty input" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id "../../etc/cron.d/x" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id "" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id "106;" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
 # -------------------------------------------------------------------
 # ensure_guest_tags
 # -------------------------------------------------------------------

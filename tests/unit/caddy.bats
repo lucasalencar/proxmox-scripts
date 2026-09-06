@@ -384,3 +384,104 @@ EOF
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
   fi
 }
+
+@test "caddy generate drops custom-named stale blocks by excluded IP" {
+  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  cat > "$REPO_ROOT/caddy/Caddyfile.local" <<'EOF'
+http://router-admin.marx.home {
+    reverse_proxy 10.0.0.6:8080
+}
+
+EOF
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_106=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST=$'VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID\n201 testvm               running    2048              20.00 9999'
+  export MOCK_QM_CONFIG_201="hostname: testvm"
+  export MOCK_QM_STATUS="status: running"
+  export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.6"
+  export MOCK_QM_GUEST_HOSTNAME_I="10.0.0.7"
+
+  run bash -c "printf '\n\n' | bash \"$REPO_ROOT/caddy/generate-caddyfile.sh\" 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dropping stale block router-admin"* ]]
+  ! /usr/bin/grep -q "router-admin" "$REPO_ROOT/caddy/Caddyfile.local"
+  /usr/bin/grep -q "testvm.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+}
+
+@test "caddy generate never re-attaches excluded blocks via multi-service" {  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  cat > "$REPO_ROOT/caddy/Caddyfile.local" <<'EOF'
+http://tailscale-router.marx.home {
+    reverse_proxy 10.0.0.5:8080
+}
+
+EOF
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n105        running                 app\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_105="hostname: app"
+  export MOCK_PCT_CONFIG_106=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST="VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID"
+  export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.5"
+  export MOCK_PCT_EXEC_SS_OUTPUT=$'State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess\nLISTEN 0     128          0.0.0.0:9000      0.0.0.0:*'
+
+  # Single port: no multi prompt; saved block shares the IP and must be dropped, not re-attached
+  run bash -c "printf '\n\n' | bash \"$REPO_ROOT/caddy/generate-caddyfile.sh\" 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dropping stale block tailscale-router"* ]] || [[ "$output" == *"Dropping saved block tailscale-router"* ]]
+  /usr/bin/grep -q "app.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "tailscale-router" "$REPO_ROOT/caddy/Caddyfile.local"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+}
+
+@test "caddy generate collects IPv4 tokens when hostname lists IPv6 first" {
+  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  cat > "$REPO_ROOT/caddy/Caddyfile.local" <<'EOF'
+http://router-admin.marx.home {
+    reverse_proxy 10.0.0.6:8080
+}
+
+EOF
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_106=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST=$'VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID\n201 testvm               running    2048              20.00 9999'
+  export MOCK_QM_CONFIG_201="hostname: testvm"
+  export MOCK_QM_STATUS="status: running"
+  export MOCK_PCT_EXEC_HOSTNAME_I="fe80::1 10.0.0.6"
+  export MOCK_QM_GUEST_HOSTNAME_I="10.0.0.7"
+
+  run bash -c "printf '\n\n' | bash \"$REPO_ROOT/caddy/generate-caddyfile.sh\" 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dropping stale block router-admin"* ]]
+  ! /usr/bin/grep -q "router-admin" "$REPO_ROOT/caddy/Caddyfile.local"
+  /usr/bin/grep -q "testvm.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+}

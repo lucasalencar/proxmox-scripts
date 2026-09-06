@@ -36,21 +36,21 @@ if $has_P; then
     exit 0
   fi
 
-  # ipconfig pattern: ipconfig\d:\s*ip=\K[^/]+
+  # ipconfig pattern: ipconfig\d:\s*ip=\K[^,\s/]+
   if [[ "$pattern" == *"ipconfig"* ]]; then
-    echo "$input" | sed -E 's/.*ip=([^\/[:space:]]+).*/\1/' | head -1
+    echo "$input" | sed -E 's/.*ip=([^\/[:space:],]+).*/\1/' | head -1
     # Only output if it looks like IP
     exit 0
   fi
 
-  # ip= pattern: ip=\K[^\s/]+
+  # ip= pattern: ip=\K[^,\s/]+
   if [[ "$pattern" == "ip="* ]] || [[ "$pattern" == *"ip=\\K"* ]]; then
     # Extract ip value
-    echo "$input" | grep -oE 'ip=[^[:space:]/]+' | cut -d= -f2 | head -1
+    echo "$input" | grep -oE 'ip=[^[:space:]/,]+' | cut -d= -f2 | head -1
     exit 0
   fi
   if [[ "$pattern" == *"ip=\\K"* ]]; then
-    echo "$input" | grep -oE 'ip=[^[:space:]/]+' | cut -d= -f2 | head -1
+    echo "$input" | grep -oE 'ip=[^[:space:]/,]+' | cut -d= -f2 | head -1
     exit 0
   fi
 

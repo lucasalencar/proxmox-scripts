@@ -58,8 +58,8 @@ if [ ! -c "$TUN_DEV" ]; then
 fi
 log "TUN device: present"
 
-if [ "$(sysctl -n net.ipv4.ip_forward)" != "1" ] \
-    || [ "$(sysctl -n net.ipv6.conf.all.forwarding)" != "1" ]; then
+if [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" != "1" ] \
+    || [ "$(sysctl -n net.ipv6.conf.all.forwarding 2>/dev/null)" != "1" ]; then
     log "ERROR: IP forwarding is disabled — subnet routing would be broken."
     exit 1
 fi
