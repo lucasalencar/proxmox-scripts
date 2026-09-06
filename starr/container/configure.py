@@ -14,7 +14,6 @@ import argparse
 import ipaddress
 import json
 import os
-import re
 import stat
 import subprocess
 import sys
@@ -25,6 +24,28 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
+
+try:
+    from ruamel.yaml import YAML as _YAMLClass
+    from ruamel.yaml.error import YAMLError as _YAMLParseError
+    HAVE_RUAMEL = True
+except ImportError:
+    _YAMLClass = None
+    _YAMLParseError = None
+    HAVE_RUAMEL = False
+
+# Tuple for retry loops: empty when ruamel is absent (matching nothing),
+# but _ruamel_yaml() fails first in that case, so the clause is unreachable.
+_RETRYABLE_YAML_ERRORS = (_YAMLParseError,) if _YAMLParseError is not None else ()
+
+
+def _ruamel_yaml():
+    if not HAVE_RUAMEL or _YAMLClass is None:
+        fail("python3-ruamel.yaml is not installed — run starr/update.sh"
+             " or: apt install python3-ruamel.yaml")
+    yaml = _YAMLClass(typ="rt")
+    yaml.preserve_quotes = True
+    return yaml
 
 PROWLARR_BASE = "http://localhost:9696"
 SONARR_BASE = "http://localhost:8989"
@@ -374,37 +395,13 @@ def check_qbit_login(host: str, port: int, username: str, password: str) -> None
          % (host, port, last_error))
 
 
-def strip_inline_comment(value: str) -> str:
-    quote: Optional[str] = None
-    for index, char in enumerate(value):
-        if char in ("'", '"'):
-            if quote == char:
-                quote = None
-            elif quote is None:
-                quote = char
-        elif char == "#" and quote is None and index > 0 and value[index - 1].isspace():
-            return value[:index].rstrip()
-    return value.strip()
-
-
-def iter_yaml_sections(lines: List[str]):
-    current: Optional[str] = None
-    for line in lines:
-        top = re.match(r"^([\w-]+):\s*(?:#.*)?$", line)
-        if top:
-            current = top.group(1)
-        yield current, line
-
-
-def parse_bazarr_yaml(path: str) -> Dict[str, Dict[str, str]]:
-    sections: Dict[str, Dict[str, str]] = {}
+def parse_bazarr_yaml(path: str) -> Dict[str, Any]:
+    yaml = _ruamel_yaml()
     with open(path, encoding="utf-8", errors="replace") as handle:
-        for current, line in iter_yaml_sections(handle.readlines()):
-            kv = re.match(r"^ {2}([\w-]+):\s*(.*?)\s*$", line)
-            if kv and current:
-                sections.setdefault(current, {})[kv.group(1)] = strip_inline_comment(
-                    kv.group(2)).strip("'\"")
-    return sections
+        doc = yaml.load(handle) or {}
+    if not isinstance(doc, dict):
+        fail("unsupported Bazarr config format in %s (expected top-level mapping)" % path)
+    return doc
 
 
 def load_bazarr_api_key(config_path: str, timeout: int = 60) -> str:
@@ -413,12 +410,14 @@ def load_bazarr_api_key(config_path: str, timeout: int = 60) -> str:
     while time.time() < deadline:
         try:
             sections = parse_bazarr_yaml(config_path)
-            api_key = sections.get("auth", {}).get("apikey", "")
+            api_key = (sections.get("auth") or {}).get("apikey", "")
             if api_key:
                 return api_key
             last_error = "auth.apikey is empty"
         except OSError as exc:
             last_error = str(exc)
+        except _RETRYABLE_YAML_ERRORS as exc:
+            last_error = "unparseable YAML: %s" % exc
         time.sleep(2)
     fail("timed out waiting for Bazarr API key in %s: %s" % (config_path, last_error))
 
@@ -455,22 +454,36 @@ def bazarr_settings_form(sonarr_key: str, radarr_key: str) -> Dict[str, str]:
     }
 
 
-def bazarr_yaml_entries(sonarr_key: str, radarr_key: str) -> Dict[str, Dict[str, str]]:
+def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> None:
+    yaml = _ruamel_yaml()
+    with open(config_path, encoding="utf-8", errors="replace") as handle:
+        doc = yaml.load(handle) or {}
+    if not isinstance(doc, dict):
+        fail("unsupported Bazarr config format in %s (expected top-level mapping)" % config_path)
+    original_stat = os.stat(config_path)
     desired = desired_bazarr_settings(sonarr_key, radarr_key)
-
-    def yaml_value(key: str, value: Any) -> str:
-        if key == "apikey":
-            return "'%s'" % value
-        if isinstance(value, bool):
-            return "True" if value else "False"
-        if value == "":
-            return "''"
-        return str(value)
-
-    return {
-        section: {key: yaml_value(key, value) for key, value in values.items()}
-        for section, values in desired.items()
-    }
+    for section, values in desired.items():
+        node = doc.setdefault(section, {})
+        if not isinstance(node, dict):
+            fail("unsupported Bazarr config format in %s: section '%s' is not a mapping"
+                 % (config_path, section))
+        for key, value in values.items():
+            node[key] = value
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(config_path) or ".",
+                                    prefix=".config.yaml.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.dump(doc, handle)
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+        if os.geteuid() == 0:
+            os.chown(tmp_path, original_stat.st_uid, original_stat.st_gid)
+        os.replace(tmp_path, config_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str) -> bool:
@@ -497,73 +510,6 @@ def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
         log("Bazarr API update failed (%s) — falling back to config file" % exc)
         return False
     return wait_for_bazarr_link(api_key, sonarr_key, radarr_key)
-
-
-def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> None:
-    with open(config_path, encoding="utf-8", errors="replace") as handle:
-        lines = handle.readlines()
-    original_stat = os.stat(config_path)
-    entries = bazarr_yaml_entries(sonarr_key, radarr_key)
-    out = []
-    for current, line in iter_yaml_sections(lines):
-        key_match = re.match(r"^( {2})([\w-]+):", line)
-        if key_match and current in ("sonarr", "radarr") and key_match.group(2) in (
-                "ip", "port", "base_url", "ssl", "apikey"):
-            out.append("%s%s: %s\n" % (key_match.group(1), key_match.group(2),
-                                        entries[current][key_match.group(2)]))
-            continue
-        use = re.match(r"^( {2})(use_(?:sonarr|radarr)):", line)
-        if current == "general" and use:
-            out.append("%s%s: %s\n" % (use.group(1), use.group(2),
-                                        entries[current][use.group(2)]))
-            continue
-        out.append(line)
-
-    for section, section_entries in entries.items():
-        out = ensure_yaml_entries(out, section, section_entries)
-
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(config_path) or ".",
-                                    prefix=".config.yaml.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.writelines(out)
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
-        if os.geteuid() == 0:
-            os.chown(tmp_path, original_stat.st_uid, original_stat.st_gid)
-        os.replace(tmp_path, config_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
-def ensure_yaml_entries(lines: List[str], section: str,
-                        entries: Dict[str, str]) -> List[str]:
-    starts = []
-    for index, line in enumerate(lines):
-        match = re.match(r"^([\w-]+):\s*(?:#.*)?$", line)
-        if match:
-            starts.append((index, match.group(1)))
-    for position, (start, name) in enumerate(starts):
-        if name != section:
-            continue
-        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
-        present = {
-            match.group(1)
-            for line in lines[start + 1:end]
-            if (match := re.match(r"^ {2}([\w-]+):", line))
-        }
-        missing = [key for key in entries if key not in present]
-        if missing:
-            lines[end:end] = ["  %s: %s\n" % (key, entries[key]) for key in missing]
-        return lines
-    if lines and lines[-1].strip():
-        lines.append("\n")
-    lines.append("%s:\n" % section)
-    lines.extend("  %s: %s\n" % (key, value) for key, value in entries.items())
-    return lines
 
 
 def link_bazarr_via_file() -> None:
@@ -762,37 +708,53 @@ def self_test() -> int:
         check("duplicate matches rejected", True)
 
     import tempfile
-    sample = ("auth:\n  apikey: 'AUTHKEY' # rotated weekly\n  type: null\n"
-              "sonarr:\n  ip: 10.0.0.2\n  port: 1\n  base_url: '/wrong'\n  ssl: True\n  apikey: ''\n"
-              "radarr:\n  ip: 10.0.0.3\n  port: 2\n  base_url: '/wrong'\n  ssl: True\n  apikey: ''\n"
-              "general:\n  use_sonarr: False\n  use_radarr: False\n")
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
-        tmp.write(sample)
-        tmp_path = tmp.name
-    parsed = parse_bazarr_yaml(tmp_path)
-    check("yaml auth key wins", parsed["auth"]["apikey"] == "AUTHKEY")
-    check("yaml empty sonarr key", parsed["sonarr"]["apikey"] == "")
-    rewrite_bazarr_yaml(tmp_path, "SKEY", "RKEY")
-    reparsed = parse_bazarr_yaml(tmp_path)
-    check("yaml rewrite persists keys",
-          reparsed["sonarr"]["ip"] == LOCALHOST_IP
-          and reparsed["sonarr"]["port"] == str(SONARR_PORT)
-          and reparsed["sonarr"]["base_url"] == ""
-          and reparsed["sonarr"]["ssl"] == "False"
-          and reparsed["sonarr"]["apikey"] == "SKEY"
-          and reparsed["radarr"]["apikey"] == "RKEY"
-          and reparsed["general"]["use_sonarr"] == "True"
-          and reparsed["general"]["use_radarr"] == "True")
-    minimal = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
-    minimal.write("auth:\n  apikey: 'AUTHKEY'\n")
-    minimal.close()
-    rewrite_bazarr_yaml(minimal.name, "SKEY", "RKEY")
-    minimal_sections = parse_bazarr_yaml(minimal.name)
-    check("yaml rewrite adds missing sections",
-          minimal_sections["sonarr"]["apikey"] == "SKEY"
-          and minimal_sections["radarr"]["apikey"] == "RKEY"
-          and minimal_sections["general"]["use_sonarr"] == "True")
-    check("yaml quoted hash is preserved", strip_inline_comment("'secret #123' # note") == "'secret #123'")
+    if not HAVE_RUAMEL:
+        print("SKIP yaml round-trip checks (ruamel.yaml not installed)")
+    else:
+        sample = ("auth:\n  apikey: 'AUTHKEY' # rotated weekly\n  type: null\n"
+                  "sonarr:\n  ip: 10.0.0.2\n  port: 1\n  base_url: '/wrong'\n  ssl: True\n  apikey: ''\n"
+                  "radarr:\n  ip: 10.0.0.3\n  port: 2\n  base_url: '/wrong'\n  ssl: True\n  apikey: ''\n"
+                  "general:\n  use_sonarr: False\n  use_radarr: False\n"
+                  "unrelated:\n  keep_me: yes # operator tuning\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+            tmp.write(sample)
+            tmp_path = tmp.name
+        parsed = parse_bazarr_yaml(tmp_path)
+        check("yaml auth key wins", parsed["auth"]["apikey"] == "AUTHKEY")
+        check("yaml empty sonarr key", parsed["sonarr"]["apikey"] == "")
+        check("yaml native port type", parsed["sonarr"]["port"] == 1)
+        rewrite_bazarr_yaml(tmp_path, "SKEY", "RKEY")
+        reparsed = parse_bazarr_yaml(tmp_path)
+        check("yaml rewrite persists keys",
+              reparsed["sonarr"]["ip"] == LOCALHOST_IP
+              and reparsed["sonarr"]["port"] == SONARR_PORT
+              and reparsed["sonarr"]["base_url"] == ""
+              and reparsed["sonarr"]["ssl"] is False
+              and reparsed["sonarr"]["apikey"] == "SKEY"
+              and reparsed["radarr"]["apikey"] == "RKEY"
+              and reparsed["general"]["use_sonarr"] is True
+              and reparsed["general"]["use_radarr"] is True)
+        with open(tmp_path, encoding="utf-8") as handle:
+            rewritten = handle.read()
+        check("yaml comments survive rewrite", "# rotated weekly" in rewritten)
+        check("yaml unknown keys survive rewrite", "keep_me" in rewritten)
+        minimal = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
+        minimal.write("auth:\n  apikey: 'AUTHKEY'\n")
+        minimal.close()
+        rewrite_bazarr_yaml(minimal.name, "SKEY", "RKEY")
+        minimal_sections = parse_bazarr_yaml(minimal.name)
+        check("yaml rewrite adds missing sections",
+              minimal_sections["sonarr"]["apikey"] == "SKEY"
+              and minimal_sections["radarr"]["apikey"] == "RKEY"
+              and minimal_sections["general"]["use_sonarr"] is True)
+        bad = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
+        bad.write("- just\n- a\n- list\n")
+        bad.close()
+        try:
+            parse_bazarr_yaml(bad.name)
+            check("yaml rejects non-mapping top level", False)
+        except SystemExit:
+            check("yaml rejects non-mapping top level", True)
 
     linked = {
         "sonarr": {"ip": LOCALHOST_IP, "port": SONARR_PORT, "base_url": "",

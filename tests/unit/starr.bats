@@ -165,3 +165,12 @@ teardown() {
   /usr/bin/grep -q "update_required" "$REPO_ROOT/starr/container/update.sh"
   /usr/bin/grep -q "servarr.com/v1/update" "$REPO_ROOT/starr/container/provision.sh"
 }
+
+@test "starr container scripts declare ruamel.yaml dependency for configure fallback" {
+  /usr/bin/grep -q "python3-ruamel.yaml" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q "python3-ruamel.yaml" "$REPO_ROOT/starr/container/update.sh"
+  run bash -n "$REPO_ROOT/starr/container/provision.sh"
+  [ "$status" -eq 0 ]
+  run bash -n "$REPO_ROOT/starr/container/update.sh"
+  [ "$status" -eq 0 ]
+}
