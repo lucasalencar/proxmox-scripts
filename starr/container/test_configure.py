@@ -52,7 +52,7 @@ class FakeServarrTransport:
 
 
 class FakeBazarrTransport(FakeServarrTransport):
-    def __call__(self, api_key, method, path, body=None, form=False):
+    def __call__(self, method, path, api_key, body=None, form=False):
         return super().__call__(method, None, api_key, path, body)
 
 

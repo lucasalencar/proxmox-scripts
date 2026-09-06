@@ -118,7 +118,7 @@ def servarr_request(method: str, base: str, api_key: str, path: str,
     return api_request(method, base, "X-Api-Key", api_key, path, body)
 
 
-def bazarr_request(api_key: str, method: str, path: str,
+def bazarr_request(method: str, path: str, api_key: str,
                    body: Optional[Dict[str, Any]] = None,
                    form: bool = False) -> Any:
     return api_request(method, BAZARR_BASE, "X-API-KEY", api_key, path, body, form)
@@ -522,7 +522,7 @@ def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str)
 
 def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
     try:
-        bazarr_request(api_key, "POST", "/api/system/settings",
+        bazarr_request("POST", "/api/system/settings", api_key,
                        bazarr_settings_form(sonarr_key, radarr_key), form=True)
     except ApiError as exc:
         if exc.status in (401, 403):
@@ -552,7 +552,7 @@ def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
     last: Optional[Exception] = None
     while time.time() < deadline:
         try:
-            return bazarr_request(api_key, "GET", "/api/system/settings") or {}
+            return bazarr_request("GET", "/api/system/settings", api_key) or {}
         except ApiError as exc:
             if exc.status in (401, 403, 404):
                 fail("Bazarr settings request failed with HTTP %s; check its API key and endpoint"
@@ -567,7 +567,7 @@ def wait_for_bazarr_link(api_key: str, sonarr_key: str, radarr_key: str,
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            settings = bazarr_request(api_key, "GET", "/api/system/settings") or {}
+            settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
             if is_bazarr_linked(settings, sonarr_key, radarr_key):
                 return True
         except ApiError as exc:
