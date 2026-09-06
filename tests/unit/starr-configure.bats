@@ -138,69 +138,16 @@ teardown() {
 }
 
 # -------------------------------------------------------------------
-# starr/container/configure.py — in-container logic (stdlib + python3-ruamel.yaml)
+# starr/container/test_configure.py — python unit tests (unittest)
 # -------------------------------------------------------------------
 
-@test "starr container configure.py compiles and self-test passes" {
+@test "starr container configure.py compiles and unit tests pass" {
   run "$REAL_PYTHON3" -m py_compile "$REPO_ROOT/starr/container/configure.py"
   [ "$status" -eq 0 ]
-  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --self-test
+  run "$REAL_PYTHON3" -m py_compile "$REPO_ROOT/starr/container/test_configure.py"
   [ "$status" -eq 0 ]
-}
-
-@test "starr container configure.py builders only emit fields known by research fixtures" {
-  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-host 1.2.3.4
+  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/test_configure.py"
   [ "$status" -eq 0 ]
-  run "$REAL_PYTHON3" -c "
-import json, sys
-dump = json.loads('''$output''')
-pairs = [('prowlarr_sonarr', 'prowlarr-sonarr-schema-excerpt.json'),
-         ('prowlarr_radarr', 'prowlarr-radarr-schema-excerpt.json'),
-         ('download_sonarr', 'sonarr-qbittorrent-schema-excerpt.json'),
-         ('download_radarr', 'radarr-qbittorrent-schema-excerpt.json')]
-errors = []
-for builder_key, fixture_name in pairs:
-    built = {f['name'] for f in dump[builder_key]['fields']}
-    known = {f['name'] for f in json.load(open('$REPO_ROOT/tests/fixtures/starr/' + fixture_name))['fields']}
-    unknown = built - known
-    missing = known - built
-    if unknown:
-        errors.append('%s emits unknown fields %s' % (builder_key, sorted(unknown)))
-    if missing:
-        errors.append('%s omits schema fields %s' % (builder_key, sorted(missing)))
-for builder_key, fixture_name in pairs[:2]:
-    expected = {f['name']: f.get('value') for f in json.load(open('$REPO_ROOT/tests/fixtures/starr/' + fixture_name))['fields']}
-    actual = {f['name']: f.get('value') for f in dump[builder_key]['fields']}
-    for name, value in expected.items():
-        if name == 'apiKey':
-            continue
-        if actual.get(name) != value:
-            errors.append('%s has %s=%r, expected %r' % (builder_key, name, actual.get(name), value))
-if errors:
-    print('\n'.join(errors))
-    sys.exit(1)
-"
-  [ "$status" -eq 0 ]
-}
-
-@test "starr container configure.py validates qbit port range" {
-  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-port 0
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"between 1 and 65535"* ]]
-
-  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-port 65536
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"between 1 and 65535"* ]]
-}
-
-@test "starr container configure.py accepts IP hosts and rejects URL userinfo" {
-  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-host 2001:db8::86
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"2001:db8::86"* ]]
-
-  run "$REAL_PYTHON3" "$REPO_ROOT/starr/container/configure.py" --dump-desired --qbit-host '127.0.0.1@attacker.example'
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"must be an IP address"* ]]
 }
 
 # -------------------------------------------------------------------
