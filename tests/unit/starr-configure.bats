@@ -138,7 +138,7 @@ teardown() {
 }
 
 # -------------------------------------------------------------------
-# starr/container/configure.py — in-container logic (stdlib only)
+# starr/container/configure.py — in-container logic (stdlib + python3-ruamel.yaml)
 # -------------------------------------------------------------------
 
 @test "starr container configure.py compiles and self-test passes" {

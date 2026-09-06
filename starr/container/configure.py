@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wire Starr integrations inside the starr LXC (stdlib only).
+"""Wire Starr integrations inside the starr LXC (stdlib + python3-ruamel.yaml via apt).
 
 Reads Servarr API keys from config.xml, then idempotently creates:
   - Prowlarr applications -> Sonarr / Radarr (indexer sync)
@@ -14,6 +14,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -78,9 +79,15 @@ def fail(msg: str) -> NoReturn:
 
 class ApiError(Exception):
     def __init__(self, status: Optional[int], body: str):
-        super(ApiError, self).__init__("HTTP %s: %s" % (status, body[:300]))
+        scrubbed = scrub_secrets(body[:300])
+        super(ApiError, self).__init__("HTTP %s: %s" % (status, scrubbed))
         self.status = status
-        self.body = body
+        self.body = scrubbed
+
+
+def scrub_secrets(text: str) -> str:
+    redacted = re.sub(r'("(?:apiKey|apikey|password)"\s*:\s*")[^"]*', r'\1***', text)
+    return re.sub(r'((?:apiKey|apikey|password)=)[^&\s;"\']*', r'\1***', redacted)
 
 
 def api_request(method: str, base: str, header_name: str, header_value: str,
@@ -249,6 +256,17 @@ def merge_fields(existing: Dict[str, Any],
     return merged
 
 
+# Placeholder Servarr APIs return for privacy-guarded fields instead of real values.
+# A masked read can never prove a secret matches, so it counts as equal for
+# idempotency; rotating a secret therefore requires removing the resource first
+# (delete the client/app, then re-run to recreate it with the new secret).
+MASKED_SECRET_PLACEHOLDER = "********"
+
+
+def _secret_aware_equal(current: Any, desired: Any) -> bool:
+    return current == desired or current == MASKED_SECRET_PLACEHOLDER
+
+
 def plan_action(match: Callable[[Dict[str, Any]], bool],
                 collection: List[Dict[str, Any]],
                 desired: Dict[str, Any]) -> str:
@@ -256,11 +274,13 @@ def plan_action(match: Callable[[Dict[str, Any]], bool],
     if item is None:
         return "created"
     merged = merge_fields(item, desired)
+    merged_map = fields_map(merged)
+    item_map = fields_map(item)
     desired_properties = {key: value for key, value in desired.items()
                           if key not in ("id", "fields")}
-    if fields_map(merged) == fields_map(item) and all(
-            merged.get(key) == item.get(key)
-            for key in desired_properties):
+    if (merged_map.keys() == item_map.keys()
+            and all(_secret_aware_equal(item_map[name], merged_map[name]) for name in merged_map)
+            and all(merged.get(key) == item.get(key) for key in desired_properties)):
         return "unchanged"
     return "updated"
 
@@ -609,6 +629,13 @@ def self_test() -> int:
         if not condition:
             failures.append(label)
 
+    leaked = str(ApiError(400, '{"message":"Invalid host","password":"s3cret",'
+                              '"apiKey":"K","detail":"apikey=zzz&host=h"}'))
+    check("api errors scrub secrets",
+          "s3cret" not in leaked and '"K"' not in leaked and "zzz" not in leaked)
+    check("api errors keep diagnostics",
+          "400" in leaked and "Invalid host" in leaked and "host=h" in leaked)
+
     sonarr_app = build_prowlarr_app("sonarr", "KEY1")
     check("prowlarr sonarr contract", sonarr_app["configContract"] == "SonarrSettings")
     check("prowlarr sonarr sync level", sonarr_app["syncLevel"] == "fullSync")
@@ -681,6 +708,15 @@ def self_test() -> int:
     drift = dict(same)
     drift["removeCompletedDownloads"] = False
     check("plan cleanup drift updated", plan_action(match_qbittorrent, [drift], sonarr_client) == "updated")
+    masked = dict(same)
+    masked["fields"] = fields_list(dict(cmap, host="192.168.31.86", password="********",
+                                        username="admin", port=8090))
+    check("plan masked secrets unchanged",
+          plan_action(match_qbittorrent, [masked], sonarr_client) == "unchanged")
+    masked_stale = dict(masked)
+    masked_stale["fields"] = fields_list(dict(cmap, host="10.0.0.1", password="********"))
+    check("plan masked secrets with stale host updated",
+          plan_action(match_qbittorrent, [masked_stale], sonarr_client) == "updated")
 
     calls: List[Tuple[str, Any]] = []
 
