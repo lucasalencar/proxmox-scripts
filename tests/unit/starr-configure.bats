@@ -45,6 +45,10 @@ teardown() {
   run bash "$REPO_ROOT/starr/configure.sh" 2>&1
   [ "$status" -eq 0 ]
   /usr/bin/grep -q "pct push 105.*container/configure.py" "$MOCK_LOG"
+  /usr/bin/grep -q -- "--qbit-pass-stdin" "$MOCK_LOG"
+  # Secrets must never appear in logs or stdout, on either credential path
+  ! /usr/bin/grep -q "env-secret" "$MOCK_LOG"
+  [[ "$output" != *"env-secret"* ]]
 }
 
 @test "starr configure pushes configure.py and runs it with discovered qbit host" {
