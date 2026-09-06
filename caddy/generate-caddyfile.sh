@@ -64,8 +64,29 @@ SAVED_NAMES=("${!PORT_MAP[@]}")
 FINAL_NAMES=()
 FINAL_IPS=()
 
-# IPs of guests skipped via no-auto-proxy (stale blocks for these are dropped)
+# IPs and names of guests skipped via no-auto-proxy (stale blocks for these are dropped)
 SKIPPED_IPS=()
+SKIPPED_NAMES=()
+
+# Reports whether a saved Caddy block belongs to an excluded (no-auto-proxy)
+# guest, matched by subdomain name or by the guest's current IP.
+# Usage: is_excluded_block <saved_name> <saved_ip>
+is_excluded_block() {
+    local block_name="$1"
+    local block_ip="$2"
+    local skipped
+
+    for skipped in "${SKIPPED_NAMES[@]:-}"; do
+        [ -z "$skipped" ] && continue
+        [ "$block_name" = "$skipped" ] && return 0
+    done
+    [ -z "$block_ip" ] && return 1
+    for skipped in "${SKIPPED_IPS[@]:-}"; do
+        [ -z "$skipped" ] && continue
+        [ "$block_ip" = "$skipped" ] && return 0
+    done
+    return 1
+}
 
 # Records one output entry (creates or updates the subdomain mapping)
 add_entry() {
@@ -155,6 +176,7 @@ while IFS= read -r cid; do
     [ -z "$ip" ] && continue
     if guest_has_tag "ct" "$cid" "no-auto-proxy"; then
         log_info "  Skipping LXC $cid ($name) — tagged no-auto-proxy"
+        SKIPPED_NAMES+=("$name")
         SKIPPED_IPS+=("$ip")
         continue
     fi
@@ -191,6 +213,7 @@ while IFS= read -r vmid; do
     [ -z "$ip" ] && continue
     if guest_has_tag "vm" "$vmid" "no-auto-proxy"; then
         log_info "  Skipping VM $vmid ($name) — tagged no-auto-proxy"
+        SKIPPED_NAMES+=("$name")
         SKIPPED_IPS+=("$ip")
         continue
     fi
@@ -365,17 +388,9 @@ echo ""
         if [ "$is_final" = "n" ]; then
             # Drop stale blocks that belong to a guest tagged no-auto-proxy:
             # keeping them would silently re-publish a guest the operator excluded.
-            saved_ip="${IP_MAP[$saved]:-}"
-            dropped="n"
-            for skip_ip in "${SKIPPED_IPS[@]:-}"; do
-                [ -z "$skip_ip" ] && continue
-                if [ -n "$saved_ip" ] && [ "$saved_ip" = "$skip_ip" ]; then
-                    dropped="y"
-                    break
-                fi
-            done
-            if [ "$dropped" = "y" ]; then
-                log_warning "  Dropping stale block $saved.$DOMAIN ($saved_ip) — guest tagged no-auto-proxy" >&2
+            # Name covers DHCP changes; current IP covers custom subdomains.
+            if is_excluded_block "$saved" "${IP_MAP[$saved]:-}"; then
+                log_warning "  Dropping stale block $saved.$DOMAIN (${IP_MAP[$saved]:-unknown}:${PORT_MAP[$saved]:-unknown}) — guest tagged no-auto-proxy" >&2
                 continue
             fi
             log_warning "  Preserving unmanaged block $saved.$DOMAIN (${IP_MAP[$saved]:-unknown}:${PORT_MAP[$saved]:-unknown})" >&2

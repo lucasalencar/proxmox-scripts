@@ -342,7 +342,9 @@ get_container_id_by_exact_name() {
     pct list | awk -v n="$name" 'NR>1 && tolower($NF) == tolower(n) {print $1; exit}'
 }
 
-# Returns 0 when a guest carries <tag> in its Proxmox tags (token match).
+# Returns 0 when a guest carries <tag> in its Proxmox tags (whole-token match).
+# Separators comma, semicolon and space are all honored; matching is
+# case-insensitive and fixed-string (no regex), so metacharacters are safe.
 # Usage: guest_has_tag ct 100 no-auto-proxy
 guest_has_tag() {
     local guest_kind="$1"
@@ -350,16 +352,63 @@ guest_has_tag() {
     local wanted="$3"
     local cfg=""
 
+    [ -z "$wanted" ] && return 1
     case "$guest_kind" in
         ct) cfg=$(pct config "$guest_id" 2>/dev/null || true) ;;
         vm) cfg=$(qm config "$guest_id" 2>/dev/null || true) ;;
         *) log_error "guest_has_tag: unknown guest kind '$guest_kind'"; return 2 ;;
     esac
 
-    local tags
+    local tags norm wanted_lower
     tags=$(echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}')
     [ -z "$tags" ] && return 1
-    echo "$tags" | grep -qiE "(^|[;, ])${wanted}([;, ]|$)"
+    norm=$(echo "$tags" | tr '[:upper:]' '[:lower:]' | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
+    wanted_lower=$(echo "$wanted" | tr '[:upper:]' '[:lower:]')
+    [ -z "$norm" ] && return 1
+    echo ",${norm}," | grep -qF ",${wanted_lower},"
+}
+
+# Ensures a guest carries every tag in a comma-separated list. Missing tags
+# are appended while existing ones are preserved untouched. Returns 1 when
+# the set operation fails, so callers can abort instead of continuing
+# without protection (e.g. a missing no-auto-proxy tag).
+# Usage: ensure_guest_tags ct 100 "tailscale,router,no-auto-proxy" || exit 1
+ensure_guest_tags() {
+    local guest_kind="$1"
+    local guest_id="$2"
+    local required_csv="$3"
+
+    case "$guest_kind" in
+        ct|vm) ;;
+        *) log_error "ensure_guest_tags: unknown guest kind '$guest_kind'"; return 2 ;;
+    esac
+
+    local IFS=','
+    local -a required_tags=()
+    read -ra required_tags <<< "$required_csv"
+
+    local tag missing="" current normalized new_tags
+    for tag in "${required_tags[@]}"; do
+        [ -z "$tag" ] && continue
+        if ! guest_has_tag "$guest_kind" "$guest_id" "$tag"; then
+            missing="${missing:+$missing,}$tag"
+        fi
+    done
+    [ -z "$missing" ] && return 0
+
+    if [ "$guest_kind" = "ct" ]; then
+        current=$(pct config "$guest_id" 2>/dev/null | awk -F': ' '/^[Tt]ags:/ {print $2}')
+    else
+        current=$(qm config "$guest_id" 2>/dev/null | awk -F': ' '/^[Tt]ags:/ {print $2}')
+    fi
+    normalized=$(echo "$current" | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
+    new_tags="${normalized:+$normalized,}$missing"
+
+    if [ "$guest_kind" = "ct" ]; then
+        pct set "$guest_id" --tags "$new_tags" 2>/dev/null
+    else
+        qm set "$guest_id" --tags "$new_tags" 2>/dev/null
+    fi
 }
 
 # Configures ZFS ACLs for specific users and enables inheritance

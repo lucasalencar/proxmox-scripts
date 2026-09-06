@@ -2,6 +2,25 @@
 set -euo pipefail
 source "$(dirname "$0")/../mock_lib.sh"
 mock_log "curl" "$@"
+
+# Honor -o/--output so download-then-verify flows work under test.
+# Content of a Tailscale source list is controllable via MOCK_CURL_LIST_CONTENT.
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ] || [ "$prev" = "--output" ]; then
+    out="$arg"
+  fi
+  prev="$arg"
+done
+if [ -n "$out" ]; then
+  if [[ "$*" == *"tailscale-keyring.list"* ]]; then
+    echo "${MOCK_CURL_LIST_CONTENT:-deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main}" > "$out"
+  else
+    echo "${MOCK_CURL_OUTPUT:-mock-download}" > "$out"
+  fi
+fi
+
 # Return empty script that does nothing, to avoid network
 echo 'echo "mock curl install script executed"'
 exit 0

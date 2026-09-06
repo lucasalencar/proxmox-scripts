@@ -175,6 +175,103 @@ create_temp_root() {
 }
 
 # -------------------------------------------------------------------
+# get_container_id_by_exact_name
+# -------------------------------------------------------------------
+
+@test "get_container_id_by_exact_name matches exact name only" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 tailscale-router\n106        running                 tailscale-router-2\n107        running                 my-tailscale-router'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_id_by_exact_name "tailscale-router"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "105" ]
+}
+
+@test "get_container_id_by_exact_name matches case-insensitively" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 Tailscale-Router'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_id_by_exact_name "tailscale-router"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "105" ]
+}
+
+@test "get_container_id_by_exact_name returns empty when no exact match" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router-2'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; result=$(get_container_id_by_exact_name "tailscale-router"); [ -z "$result" ] && echo empty || echo "not empty:$result"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "empty" ]
+}
+
+@test "get_container_id_by_exact_name fails for empty name" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_id_by_exact_name "" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+# -------------------------------------------------------------------
+# guest_has_tag
+# -------------------------------------------------------------------
+
+@test "guest_has_tag matches comma-separated token" {
+  export MOCK_PCT_CONFIG=$'hostname: router\ntags: tailscale,router,no-auto-proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "yes" ]
+}
+
+@test "guest_has_tag matches semicolon and space separators case-insensitively" {
+  export MOCK_PCT_CONFIG=$'hostname: router\nTags: vpn;No-Auto-Proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "yes" ]
+}
+
+@test "guest_has_tag rejects substring matches" {
+  export MOCK_PCT_CONFIG=$'hostname: router\ntags: my-no-auto-proxy,no-auto-proxy-foo'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag rejects regex metacharacters in wanted tag" {
+  export MOCK_PCT_CONFIG=$'hostname: router\ntags: fooXbar'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 "foo.bar" && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag fails when tags absent" {
+  export MOCK_PCT_CONFIG="hostname: router"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag fails for unknown guest kind" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vmx 106 no-auto-proxy; echo "exit:$?"'
+  [[ "$output" == *"exit:2"* ]]
+}
+
+# -------------------------------------------------------------------
+# ensure_guest_tags
+# -------------------------------------------------------------------
+
+@test "ensure_guest_tags appends missing tags preserving existing" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: foo; tailscale'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; ensure_guest_tags ct 106 "tailscale,router,no-auto-proxy"'
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "pct set 106 --tags foo,tailscale,router,no-auto-proxy" "$MOCK_LOG"
+}
+
+@test "ensure_guest_tags does nothing when complete" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; ensure_guest_tags ct 106 "tailscale,router,no-auto-proxy"'
+  [ "$status" -eq 0 ]
+  ! /usr/bin/grep -q "pct set 106" "$MOCK_LOG"
+}
+
+@test "ensure_guest_tags fails when set fails" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG="hostname: tailscale-router"
+  export MOCK_PCT_SET_FAIL=1
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; ensure_guest_tags ct 106 "tailscale" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+# -------------------------------------------------------------------
 # get_vm_id_by_name
 # -------------------------------------------------------------------
 
