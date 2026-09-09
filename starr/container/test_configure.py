@@ -935,9 +935,37 @@ class BazarrAuthTests(unittest.TestCase):
         self.assertEqual(
             configure.plan_bazarr_auth(masked, "form", "u", "pw"), "unchanged")
         drift = {"auth": {"type": "form", "username": "other",
-                          "password": "********"}}
+                           "password": "********"}}
         self.assertEqual(
             configure.plan_bazarr_auth(drift, "form", "u", "pw"), "updated")
+
+    def test_auth_plan_matches_md5_digest(self):
+        # Bazarr persists auth.password as an MD5 hex digest, never
+        # plaintext: md5(desired) must count as unchanged.
+        import hashlib
+        digest = hashlib.md5("pw".encode()).hexdigest()
+        stored = {"auth": {"type": "form", "username": "u",
+                           "password": digest}}
+        self.assertEqual(
+            configure.plan_bazarr_auth(stored, "form", "u", "pw"), "unchanged")
+        rotated = {"auth": {"type": "form", "username": "u",
+                            "password": hashlib.md5("old".encode()).hexdigest()}}
+        self.assertEqual(
+            configure.plan_bazarr_auth(rotated, "form", "u", "pw"), "updated")
+
+    def test_ensure_bazarr_auth_md5_unchanged_writes_nothing(self):
+        import hashlib
+        digest = hashlib.md5("pw".encode()).hexdigest()
+        linked = {"auth": {"type": "form", "username": "u",
+                           "password": digest}}
+        transport = FakeBazarrTransport(linked)
+        with unittest.mock.patch.object(configure, "bazarr_request", transport), \
+             unittest.mock.patch.object(configure, "probe_bazarr_login",
+                                        return_value=True):
+            action = configure.ensure_bazarr_auth(
+                "APIKEY", "u", "pw", "form", False)
+        self.assertEqual(action, "unchanged")
+        self.assertFalse(any(call[0] == "POST" for call in transport.calls))
 
     def test_ensure_bazarr_auth_posts_and_verifies(self):
         virgin = {"auth": {"type": None, "username": "", "password": ""}}

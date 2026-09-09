@@ -40,3 +40,5 @@
 
 - **Servarr forms-login verification must judge the POST, never the API:** good credentials answer `POST /login` with 302 to `/` plus a session cookie (`*Auth`), bad ones bounce back to `/login` (`loginFailed`) with none. Servarr `/api/*` routes only accept the API key — never the session cookie — so a cookie round-trip against the API always 401s (even for correct passwords) and can never prove anything. (Python's `http.cookiejar` additionally mangles dotless `localhost` into `localhost.local` and won't send the cookie back; parsing `Set-Cookie` from the login response avoids the quirk entirely.)
 
+- **Bazarr persists `auth.password` as MD5 hex, never plaintext:** idempotency comparisons must treat `md5(desired) == stored` as equal (exact proof of knowledge, no false positives) alongside the `********` masked placeholder — otherwise every run looks "updated" and verification polling never converges.
+

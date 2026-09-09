@@ -12,6 +12,7 @@ never printed; stdout carries only a JSON summary of actions taken.
 
 import argparse
 import base64
+import hashlib
 import ipaddress
 import json
 import os
@@ -262,7 +263,26 @@ MASKED_SECRET_PLACEHOLDER = "********"
 
 
 def _secret_aware_equal(current: Any, desired: Any) -> bool:
-    return current == desired or current == MASKED_SECRET_PLACEHOLDER
+    if current == desired or current == MASKED_SECRET_PLACEHOLDER:
+        return True
+    return _md5_matches(current, desired)
+
+
+def _md5_matches(current: Any, desired: Any) -> bool:
+    """True when the stored value is the MD5 hex digest of the secret.
+
+    Bazarr persists auth.password as MD5 hex, never plaintext; matching
+    the digest proves knowledge of the secret with no false positives.
+    """
+    if not isinstance(current, str) or not isinstance(desired, str):
+        return False
+    if len(current) != 32:
+        return False
+    try:
+        int(current, 16)
+    except ValueError:
+        return False
+    return hashlib.md5(desired.encode()).hexdigest() == current.lower()
 
 
 def plan_action(match: Callable[[Dict[str, Any]], bool],
