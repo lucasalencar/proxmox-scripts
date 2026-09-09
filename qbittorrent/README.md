@@ -23,6 +23,16 @@ bash qbittorrent/install.sh
 bash qbittorrent/update.sh
 ```
 
+## Reset WebUI Password
+
+Generates a new random password, applies it inside the container, and prints it (needed for login and for `starr/configure.sh --qbit-pass`):
+
+```bash
+python3 qbittorrent/set_password.py --container <container-id> --user admin
+```
+
+Replace `<container-id>` with the qBittorrent container ID. The first word of the output is the new password — save it in a password manager.
+
 ## Post-Install Configuration
 
 Follow the [TRaSH Guides - qBittorrent Basic Setup](https://trash-guides.info/Downloaders/qBittorrent/Basic-Setup/) for the recommended settings. Key points:
