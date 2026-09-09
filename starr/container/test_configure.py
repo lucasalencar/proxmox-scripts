@@ -517,7 +517,7 @@ class EnsureFlowTests(unittest.TestCase):
         with unittest.mock.patch.object(configure, "bazarr_request", transport), \
              unittest.mock.patch.object(configure, "parse_bazarr_yaml",
                                         return_value={"auth": {"apikey": "AUTHKEY"}}), \
-             unittest.mock.patch.object(configure, "wait_for_bazarr_link",
+             unittest.mock.patch.object(configure, "wait_for_bazarr_state",
                                         return_value=False):
             with self.assertRaises(SystemExit):
                 configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml")

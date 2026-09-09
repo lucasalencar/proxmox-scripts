@@ -551,18 +551,18 @@ def plan_bazarr_auth(settings: Dict[str, Any], auth_type: str,
     return "unchanged"
 
 
-def wait_for_bazarr_auth(api_key: str, auth_type: str, username: str,
-                         password: str, timeout: int = 30) -> bool:
+def wait_for_bazarr_state(api_key: str, ready: Callable[[Dict[str, Any]], bool],
+                          what: str, timeout: int = 30) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
-            if plan_bazarr_auth(settings, auth_type, username, password) == "unchanged":
+            if ready(settings):
                 return True
         except ApiError as exc:
             if exc.status in (401, 403, 404):
-                fail("Bazarr auth verification failed with HTTP %s; check its API key and endpoint"
-                     % exc.status)
+                fail("Bazarr %s verification failed with HTTP %s; check its API key and endpoint"
+                     % (what, exc.status))
         time.sleep(2)
     return False
 
@@ -584,7 +584,10 @@ def ensure_bazarr_auth(api_key: str, username: str, password: str,
         if exc.status in (401, 403):
             fail("Bazarr auth update rejected with HTTP %s; check its API key" % exc.status)
         fail("Bazarr auth update failed (%s); re-run once the Bazarr API is reachable" % exc)
-    if wait_for_bazarr_auth(api_key, auth_type, username, password):
+    if wait_for_bazarr_state(
+            api_key,
+            lambda settings: plan_bazarr_auth(settings, auth_type, username, password) == "unchanged",
+            "auth"):
         log("Bazarr login updated via API (user %s)" % username)
         return "updated"
     fail("Bazarr auth update did not persist; re-run once the Bazarr API is reachable")
@@ -668,7 +671,10 @@ def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
         if exc.status in (401, 403):
             fail("Bazarr settings update rejected with HTTP %s; check its API key" % exc.status)
         fail("Bazarr settings update failed (%s); re-run once the Bazarr API is reachable" % exc)
-    return wait_for_bazarr_link(api_key, sonarr_key, radarr_key)
+    return wait_for_bazarr_state(
+        api_key,
+        lambda settings: is_bazarr_linked(settings, sonarr_key, radarr_key),
+        "link")
 
 
 def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
@@ -684,22 +690,6 @@ def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
             last = exc
             time.sleep(2)
     fail("Bazarr API was not ready after %ds: %s" % (timeout, last))
-
-
-def wait_for_bazarr_link(api_key: str, sonarr_key: str, radarr_key: str,
-                         timeout: int = 30) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
-            if is_bazarr_linked(settings, sonarr_key, radarr_key):
-                return True
-        except ApiError as exc:
-            if exc.status in (401, 403, 404):
-                fail("Bazarr verification failed with HTTP %s; check its API key and endpoint"
-                     % exc.status)
-        time.sleep(2)
-    return False
 
 
 def ensure_bazarr(sonarr_key: str, radarr_key: str,
