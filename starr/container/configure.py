@@ -11,15 +11,11 @@ never printed; stdout carries only a JSON summary of actions taken.
 """
 
 import argparse
-import hashlib
 import ipaddress
 import json
 import os
 import re
-import stat
-import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -555,39 +551,6 @@ def plan_bazarr_auth(settings: Dict[str, Any], auth_type: str,
     return "unchanged"
 
 
-def rewrite_bazarr_auth_yaml(config_path: str, auth_type: str,
-                             username: str, password: str) -> None:
-    yaml = _ruamel_yaml()
-    with open(config_path, encoding="utf-8", errors="replace") as handle:
-        doc = yaml.load(handle) or {}
-    if not isinstance(doc, dict):
-        fail("unsupported Bazarr config format in %s (expected top-level mapping)" % config_path)
-    original_stat = os.stat(config_path)
-    node = doc.setdefault("auth", {})
-    if not isinstance(node, dict):
-        fail("unsupported Bazarr config format in %s: section 'auth' is not a mapping"
-             % config_path)
-    node["type"] = auth_type
-    node["username"] = username
-    # Stored config holds the lowercase MD5 hex of the password; the API takes plaintext.
-    node["password"] = hashlib.md5(password.encode("utf-8")).hexdigest()
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(config_path) or ".",
-                                    prefix=".config.yaml.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            yaml.dump(doc, handle)
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
-        if os.geteuid() == 0:
-            os.chown(tmp_path, original_stat.st_uid, original_stat.st_gid)
-        os.replace(tmp_path, config_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
 def wait_for_bazarr_auth(api_key: str, auth_type: str, username: str,
                          password: str, timeout: int = 30) -> bool:
     deadline = time.time() + timeout
@@ -605,8 +568,7 @@ def wait_for_bazarr_auth(api_key: str, auth_type: str, username: str,
 
 
 def ensure_bazarr_auth(api_key: str, username: str, password: str,
-                       auth_type: str, dry_run: bool,
-                       config_path: str = BAZARR_CONFIG) -> str:
+                       auth_type: str, dry_run: bool) -> str:
     settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
     action = plan_bazarr_auth(settings, auth_type, username, password)
     if action == "unchanged":
@@ -621,17 +583,11 @@ def ensure_bazarr_auth(api_key: str, username: str, password: str,
     except ApiError as exc:
         if exc.status in (401, 403):
             fail("Bazarr auth update rejected with HTTP %s; check its API key" % exc.status)
-        log("Bazarr API auth update failed (%s) — falling back to config file" % exc)
-        rewrite_bazarr_auth_yaml(config_path, auth_type, username, password)
-        link_bazarr_via_file()
-        if wait_for_bazarr_auth(api_key, auth_type, username, password):
-            log("Bazarr login updated via config file (user %s)" % username)
-            return "updated"
-        fail("Bazarr auth update did not persist")
+        fail("Bazarr auth update failed (%s); re-run once the Bazarr API is reachable" % exc)
     if wait_for_bazarr_auth(api_key, auth_type, username, password):
         log("Bazarr login updated via API (user %s)" % username)
         return "updated"
-    fail("Bazarr auth update did not persist")
+    fail("Bazarr auth update did not persist; re-run once the Bazarr API is reachable")
 
 
 def parse_bazarr_yaml(path: str) -> Dict[str, Any]:
@@ -690,38 +646,6 @@ def bazarr_settings_form(sonarr_key: str, radarr_key: str) -> Dict[str, str]:
             for key, value in values.items()}
 
 
-def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> None:
-    yaml = _ruamel_yaml()
-    with open(config_path, encoding="utf-8", errors="replace") as handle:
-        doc = yaml.load(handle) or {}
-    if not isinstance(doc, dict):
-        fail("unsupported Bazarr config format in %s (expected top-level mapping)" % config_path)
-    original_stat = os.stat(config_path)
-    desired = desired_bazarr_settings(sonarr_key, radarr_key)
-    for section, values in desired.items():
-        node = doc.setdefault(section, {})
-        if not isinstance(node, dict):
-            fail("unsupported Bazarr config format in %s: section '%s' is not a mapping"
-                 % (config_path, section))
-        for key, value in values.items():
-            node[key] = value
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(config_path) or ".",
-                                    prefix=".config.yaml.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            yaml.dump(doc, handle)
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
-        if os.geteuid() == 0:
-            os.chown(tmp_path, original_stat.st_uid, original_stat.st_gid)
-        os.replace(tmp_path, config_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
 def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str) -> bool:
     desired = desired_bazarr_settings(sonarr_key, radarr_key)
     sonarr = settings.get("sonarr", {}) or {}
@@ -743,24 +667,8 @@ def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
     except ApiError as exc:
         if exc.status in (401, 403):
             fail("Bazarr settings update rejected with HTTP %s; check its API key" % exc.status)
-        log("Bazarr API update failed (%s) — falling back to config file" % exc)
-        return False
+        fail("Bazarr settings update failed (%s); re-run once the Bazarr API is reachable" % exc)
     return wait_for_bazarr_link(api_key, sonarr_key, radarr_key)
-
-
-def link_bazarr_via_file() -> None:
-    proc = subprocess.run(["systemctl", "restart", "bazarr"])
-    if proc.returncode != 0:
-        fail("bazarr restart failed (exit %d) — fix the service before retrying"
-             % proc.returncode)
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        status = subprocess.run(["systemctl", "is-active", "--quiet", "bazarr"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if status.returncode == 0:
-            return
-        time.sleep(1)
-    fail("bazarr did not become active within 30s after restart")
 
 
 def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
@@ -807,12 +715,7 @@ def ensure_bazarr(sonarr_key: str, radarr_key: str,
     if link_bazarr_via_api(api_key, sonarr_key, radarr_key):
         log("Bazarr linked to Sonarr/Radarr via API")
         return "linked"
-    rewrite_bazarr_yaml(config_path, sonarr_key, radarr_key)
-    link_bazarr_via_file()
-    if wait_for_bazarr_link(api_key, sonarr_key, radarr_key):
-        log("Bazarr linked to Sonarr/Radarr via config file")
-        return "linked"
-    fail("Bazarr linking did not persist")
+    fail("Bazarr linking did not persist; re-run once the Bazarr API is reachable")
 
 
 def build_summary(versions: Dict[str, str], apps: Dict[str, int],
@@ -935,7 +838,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         bazarr_api_key = load_bazarr_api_key(bazarr_config)
         auth["bazarr"] = ensure_bazarr_auth(
             bazarr_api_key, creds["bazarr_user"], creds["bazarr_pass"],
-            bazarr_type, args.dry_run, bazarr_config)
+            bazarr_type, args.dry_run)
 
     print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth)))
     return 0

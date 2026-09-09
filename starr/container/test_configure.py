@@ -304,31 +304,6 @@ class BazarrYamlTests(unittest.TestCase):
         self.assertEqual(parsed["sonarr"]["apikey"], "")
         self.assertEqual(parsed["sonarr"]["port"], 1)
 
-    def test_rewrite_persists_keys_and_preserves_file(self):
-        path = write_temp(self.SAMPLE)
-        configure.rewrite_bazarr_yaml(path, "SKEY", "RKEY")
-        reparsed = configure.parse_bazarr_yaml(path)
-        self.assertEqual(reparsed["sonarr"]["ip"], configure.LOCALHOST_IP)
-        self.assertEqual(reparsed["sonarr"]["port"], configure.SONARR_PORT)
-        self.assertEqual(reparsed["sonarr"]["base_url"], "")
-        self.assertIs(reparsed["sonarr"]["ssl"], False)
-        self.assertEqual(reparsed["sonarr"]["apikey"], "SKEY")
-        self.assertEqual(reparsed["radarr"]["apikey"], "RKEY")
-        self.assertIs(reparsed["general"]["use_sonarr"], True)
-        self.assertIs(reparsed["general"]["use_radarr"], True)
-        with open(path, encoding="utf-8") as handle:
-            rewritten = handle.read()
-        self.assertIn("# rotated weekly", rewritten)
-        self.assertIn("keep_me", rewritten)
-
-    def test_rewrite_adds_missing_sections(self):
-        path = write_temp("auth:\n  apikey: 'AUTHKEY'\n")
-        configure.rewrite_bazarr_yaml(path, "SKEY", "RKEY")
-        sections = configure.parse_bazarr_yaml(path)
-        self.assertEqual(sections["sonarr"]["apikey"], "SKEY")
-        self.assertEqual(sections["radarr"]["apikey"], "RKEY")
-        self.assertIs(sections["general"]["use_sonarr"], True)
-
     def test_rejects_non_mapping_top_level(self):
         with self.assertRaises(SystemExit):
             configure.parse_bazarr_yaml(write_temp("- just\n- a\n- list\n"))
@@ -514,16 +489,12 @@ class EnsureFlowTests(unittest.TestCase):
         with unittest.mock.patch.object(configure, "bazarr_request",
                                         side_effect=fake_request), \
              unittest.mock.patch.object(configure, "parse_bazarr_yaml",
-                                        return_value={"auth": {"apikey": "AUTHKEY"}}), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml") as rewrite, \
-             unittest.mock.patch.object(configure, "link_bazarr_via_file") as restart:
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}):
             self.assertEqual(
                 configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml"),
                 "linked")
-        rewrite.assert_not_called()
-        restart.assert_not_called()
 
-    def test_bazarr_fallback_rewrites_and_restarts(self):
+    def test_bazarr_api_failure_fails_fast_for_retry(self):
         calls = []
 
         def fake_request(method, path, api_key, body=None, form=False):
@@ -535,17 +506,10 @@ class EnsureFlowTests(unittest.TestCase):
         with unittest.mock.patch.object(configure, "bazarr_request",
                                         side_effect=fake_request), \
              unittest.mock.patch.object(configure, "parse_bazarr_yaml",
-                                        return_value={"auth": {"apikey": "AUTHKEY"}}), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml") as rewrite, \
-             unittest.mock.patch.object(configure, "link_bazarr_via_file") as restart, \
-             unittest.mock.patch.object(configure, "wait_for_bazarr_link",
-                                        return_value=True):
-            self.assertEqual(
-                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml"),
-                "linked")
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}):
+            with self.assertRaises(SystemExit):
+                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml")
         self.assertIn("POST", calls)
-        rewrite.assert_called_once()
-        restart.assert_called_once()
 
     def test_bazarr_persist_failure_fails(self):
         transport = FakeBazarrTransport({"sonarr": {"apikey": ""},
@@ -553,8 +517,6 @@ class EnsureFlowTests(unittest.TestCase):
         with unittest.mock.patch.object(configure, "bazarr_request", transport), \
              unittest.mock.patch.object(configure, "parse_bazarr_yaml",
                                         return_value={"auth": {"apikey": "AUTHKEY"}}), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml"), \
-             unittest.mock.patch.object(configure, "link_bazarr_via_file"), \
              unittest.mock.patch.object(configure, "wait_for_bazarr_link",
                                         return_value=False):
             with self.assertRaises(SystemExit):
@@ -768,30 +730,22 @@ class BazarrAuthTests(unittest.TestCase):
             return {"ok": True}
 
         with unittest.mock.patch.object(configure, "bazarr_request",
-                                        side_effect=fake_request), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_auth_yaml") as rewrite:
+                                        side_effect=fake_request):
             action = configure.ensure_bazarr_auth(
                 "APIKEY", "u", "pw", "form", False)
         self.assertEqual(action, "updated")
-        rewrite.assert_not_called()
 
-    def test_ensure_bazarr_auth_falls_back_to_yaml(self):
+    def test_ensure_bazarr_auth_api_failure_fails_fast_for_retry(self):
         def fake_request(method, path, api_key, body=None, form=False):
             if method == "POST":
                 raise configure.ApiError(None, "connection reset")
             return {"auth": {"type": None, "username": "", "password": ""}}
 
         with unittest.mock.patch.object(configure, "bazarr_request",
-                                        side_effect=fake_request), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_auth_yaml") as rewrite, \
-             unittest.mock.patch.object(configure, "link_bazarr_via_file") as restart, \
-             unittest.mock.patch.object(configure, "wait_for_bazarr_auth",
-                                        return_value=True):
-            action = configure.ensure_bazarr_auth(
-                "APIKEY", "u", "pw", "form", False)
-        self.assertEqual(action, "updated")
-        rewrite.assert_called_once()
-        restart.assert_called_once()
+                                        side_effect=fake_request):
+            with self.assertRaises(SystemExit):
+                configure.ensure_bazarr_auth(
+                    "APIKEY", "u", "pw", "form", False)
 
 
 class SummaryShapeTests(unittest.TestCase):
