@@ -304,31 +304,6 @@ class BazarrYamlTests(unittest.TestCase):
         self.assertEqual(parsed["sonarr"]["apikey"], "")
         self.assertEqual(parsed["sonarr"]["port"], 1)
 
-    def test_rewrite_persists_keys_and_preserves_file(self):
-        path = write_temp(self.SAMPLE)
-        configure.rewrite_bazarr_yaml(path, "SKEY", "RKEY")
-        reparsed = configure.parse_bazarr_yaml(path)
-        self.assertEqual(reparsed["sonarr"]["ip"], configure.LOCALHOST_IP)
-        self.assertEqual(reparsed["sonarr"]["port"], configure.SONARR_PORT)
-        self.assertEqual(reparsed["sonarr"]["base_url"], "")
-        self.assertIs(reparsed["sonarr"]["ssl"], False)
-        self.assertEqual(reparsed["sonarr"]["apikey"], "SKEY")
-        self.assertEqual(reparsed["radarr"]["apikey"], "RKEY")
-        self.assertIs(reparsed["general"]["use_sonarr"], True)
-        self.assertIs(reparsed["general"]["use_radarr"], True)
-        with open(path, encoding="utf-8") as handle:
-            rewritten = handle.read()
-        self.assertIn("# rotated weekly", rewritten)
-        self.assertIn("keep_me", rewritten)
-
-    def test_rewrite_adds_missing_sections(self):
-        path = write_temp("auth:\n  apikey: 'AUTHKEY'\n")
-        configure.rewrite_bazarr_yaml(path, "SKEY", "RKEY")
-        sections = configure.parse_bazarr_yaml(path)
-        self.assertEqual(sections["sonarr"]["apikey"], "SKEY")
-        self.assertEqual(sections["radarr"]["apikey"], "RKEY")
-        self.assertIs(sections["general"]["use_sonarr"], True)
-
     def test_rejects_non_mapping_top_level(self):
         with self.assertRaises(SystemExit):
             configure.parse_bazarr_yaml(write_temp("- just\n- a\n- list\n"))
@@ -514,16 +489,12 @@ class EnsureFlowTests(unittest.TestCase):
         with unittest.mock.patch.object(configure, "bazarr_request",
                                         side_effect=fake_request), \
              unittest.mock.patch.object(configure, "parse_bazarr_yaml",
-                                        return_value={"auth": {"apikey": "AUTHKEY"}}), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml") as rewrite, \
-             unittest.mock.patch.object(configure, "link_bazarr_via_file") as restart:
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}):
             self.assertEqual(
                 configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml"),
                 "linked")
-        rewrite.assert_not_called()
-        restart.assert_not_called()
 
-    def test_bazarr_fallback_rewrites_and_restarts(self):
+    def test_bazarr_api_failure_fails_fast_for_retry(self):
         calls = []
 
         def fake_request(method, path, api_key, body=None, form=False):
@@ -535,17 +506,10 @@ class EnsureFlowTests(unittest.TestCase):
         with unittest.mock.patch.object(configure, "bazarr_request",
                                         side_effect=fake_request), \
              unittest.mock.patch.object(configure, "parse_bazarr_yaml",
-                                        return_value={"auth": {"apikey": "AUTHKEY"}}), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml") as rewrite, \
-             unittest.mock.patch.object(configure, "link_bazarr_via_file") as restart, \
-             unittest.mock.patch.object(configure, "wait_for_bazarr_link",
-                                        return_value=True):
-            self.assertEqual(
-                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml"),
-                "linked")
+                                        return_value={"auth": {"apikey": "AUTHKEY"}}):
+            with self.assertRaises(SystemExit):
+                configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml")
         self.assertIn("POST", calls)
-        rewrite.assert_called_once()
-        restart.assert_called_once()
 
     def test_bazarr_persist_failure_fails(self):
         transport = FakeBazarrTransport({"sonarr": {"apikey": ""},
@@ -553,9 +517,7 @@ class EnsureFlowTests(unittest.TestCase):
         with unittest.mock.patch.object(configure, "bazarr_request", transport), \
              unittest.mock.patch.object(configure, "parse_bazarr_yaml",
                                         return_value={"auth": {"apikey": "AUTHKEY"}}), \
-             unittest.mock.patch.object(configure, "rewrite_bazarr_yaml"), \
-             unittest.mock.patch.object(configure, "link_bazarr_via_file"), \
-             unittest.mock.patch.object(configure, "wait_for_bazarr_link",
+             unittest.mock.patch.object(configure, "wait_for_bazarr_state",
                                         return_value=False):
             with self.assertRaises(SystemExit):
                 configure.ensure_bazarr("S", "R", False, "/nonexistent.yaml")
@@ -620,6 +582,290 @@ class EnsureFlowTests(unittest.TestCase):
                          configure.SONARR_BASE)
 
 
+class ServarrAuthTests(unittest.TestCase):
+    def test_auth_file_preserves_credential_spacing(self):
+        path = write_temp("sonarr_user= admin \n"
+                          "sonarr_pass= ' s3cret with spaces ' \n"
+                          "# comment line\n"
+                          "\n")
+        creds = configure.parse_auth_file(path)
+        self.assertEqual(creds["sonarr_user"], " admin ")
+        self.assertEqual(creds["sonarr_pass"], " ' s3cret with spaces ' ")
+
+    def test_desired_host_config_locks_forms_enabled(self):
+        body = configure.build_servarr_host_config(
+            {"id": 1, "authenticationMethod": "none",
+             "authenticationRequired": "enabled",
+             "username": "", "password": "",
+             "passwordConfirmation": ""},
+            "forms", "svc-sonarr", "Pw1!")
+        self.assertEqual(body["id"], 1)
+        self.assertEqual(body["authenticationMethod"], "forms")
+        self.assertEqual(body["authenticationRequired"], "enabled")
+        self.assertEqual(body["username"], "svc-sonarr")
+        self.assertEqual(body["password"], "Pw1!")
+        self.assertEqual(body.get("passwordConfirmation"), "Pw1!")
+
+    def test_auth_plan_virgin_masked_and_drift(self):
+        virgin = {"id": 1, "authenticationMethod": "none",
+                  "authenticationRequired": "enabled",
+                  "username": "", "password": ""}
+        self.assertEqual(
+            configure.plan_servarr_auth(virgin, "forms", "u", "pw"), "updated")
+        masked = {"id": 1, "authenticationMethod": "forms",
+                  "authenticationRequired": "enabled",
+                  "username": "u", "password": "********"}
+        self.assertEqual(
+            configure.plan_servarr_auth(masked, "forms", "u", "pw"), "unchanged")
+        drift = dict(masked, username="other")
+        self.assertEqual(
+            configure.plan_servarr_auth(drift, "forms", "u", "pw"), "updated")
+
+    def test_ensure_servarr_auth_puts_merged_object(self):
+        virgin = {"id": 1, "authenticationMethod": "none",
+                  "authenticationRequired": "enabled",
+                  "username": "", "password": "", "port": 8989}
+        transport = FakeServarrTransport(virgin)
+        with unittest.mock.patch.object(configure, "servarr_request", transport), \
+             unittest.mock.patch.object(configure, "check_servarr_login",
+                                        return_value=None):
+            action = configure.ensure_servarr_auth(
+                "sonarr", configure.SONARR_BASE, "KEY",
+                configure.SONARR_HOST_PATH, "forms",
+                "u", "pw", False)
+        self.assertEqual(action, "updated")
+        puts = [c for c in transport.calls if c[0] == "PUT"]
+        self.assertEqual(len(puts), 1)
+        self.assertIn("/api/v3/config/host/1", puts[0][1])
+        self.assertEqual(puts[0][2]["username"], "u")
+        self.assertEqual(puts[0][2]["port"], 8989)
+
+    def test_ensure_servarr_auth_unchanged_writes_nothing(self):
+        masked = {"id": 1, "authenticationMethod": "forms",
+                  "authenticationRequired": "enabled",
+                  "username": "u", "password": "********"}
+        transport = FakeServarrTransport(masked)
+        with unittest.mock.patch.object(configure, "servarr_request", transport), \
+             unittest.mock.patch.object(configure, "probe_servarr_login",
+                                        return_value=True):
+            action = configure.ensure_servarr_auth(
+                "sonarr", configure.SONARR_BASE, "KEY",
+                configure.SONARR_HOST_PATH, "forms",
+                "u", "pw", False)
+        self.assertEqual(action, "unchanged")
+        self.assertEqual(
+            [c for c in transport.calls if c[0] != "GET"], [])
+
+    def test_ensure_servarr_auth_heals_failed_probe_with_update(self):
+        masked = {"id": 1, "authenticationMethod": "forms",
+                  "authenticationRequired": "enabled",
+                  "username": "u", "password": "********"}
+        transport = FakeServarrTransport(masked)
+        with unittest.mock.patch.object(configure, "servarr_request", transport), \
+             unittest.mock.patch.object(configure, "probe_servarr_login",
+                                        return_value=False), \
+             unittest.mock.patch.object(configure, "check_servarr_login",
+                                        return_value=None):
+            action = configure.ensure_servarr_auth(
+                "sonarr", configure.SONARR_BASE, "KEY",
+                configure.SONARR_HOST_PATH, "forms",
+                "u", "pw", False)
+        self.assertEqual(action, "updated")
+        self.assertEqual(len([c for c in transport.calls if c[0] == "PUT"]), 1)
+
+    def test_ensure_servarr_auth_dry_run_writes_nothing(self):
+        virgin = {"id": 1, "authenticationMethod": "none",
+                  "authenticationRequired": "enabled",
+                  "username": "", "password": ""}
+        transport = FakeServarrTransport(virgin)
+        with unittest.mock.patch.object(configure, "servarr_request", transport), \
+             unittest.mock.patch.object(configure, "check_servarr_login",
+                                        return_value=None) as login:
+            action = configure.ensure_servarr_auth(
+                "sonarr", configure.SONARR_BASE, "KEY",
+                configure.SONARR_HOST_PATH, "forms",
+                "u", "pw", True)
+        self.assertEqual(action, "would_update")
+        self.assertEqual(
+            [c for c in transport.calls if c[0] != "GET"], [])
+        login.assert_not_called()
+
+class FakeOpener:
+    """Replays urlopen results for cookie-flow probes (responses or exceptions)."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.opened = []
+
+    def open(self, req, timeout=None):
+        self.opened.append(req)
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class ServarrLoginProbeTests(unittest.TestCase):
+    STATUS = "/api/v3/system/status"
+
+    def test_forms_login_accepted_when_status_allows_session(self):
+        opener = FakeOpener([FakeHTTPResponse(200, ""),
+                             FakeHTTPResponse(200, '{"version":"4.0"}')] * 2)
+        with unittest.mock.patch("urllib.request.build_opener",
+                                 return_value=opener):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"), True)
+            self.assertIsNone(
+                configure.check_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"))
+        self.assertEqual(len(opener.opened), 4)
+
+    def test_forms_login_rejected_when_status_denies_session(self):
+        opener = FakeOpener([FakeHTTPResponse(302, ""),
+                             urllib.error.HTTPError("http://x/", 401,
+                                                    "Unauthorized", {}, None)])
+        with unittest.mock.patch("urllib.request.build_opener",
+                                 return_value=opener):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"), False)
+        with unittest.mock.patch.object(configure, "probe_servarr_login",
+                                        return_value=False) as probe:
+            with self.assertRaises(SystemExit):
+                configure.check_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw")
+            probe.assert_called_once()
+
+    def test_forms_login_transient_when_service_unreachable(self):
+        opener = FakeOpener([OSError("connection refused")])
+        with unittest.mock.patch("urllib.request.build_opener",
+                                 return_value=opener):
+            self.assertIsNone(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"))
+
+    def test_basic_login_uses_authorization_header(self):
+        seen = []
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req)
+            return FakeHTTPResponse(200, '{"version":"4.0"}')
+
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 side_effect=fake_urlopen):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw",
+                                              "basic"), True)
+        self.assertTrue(seen[0].get_header("Authorization").startswith("Basic "))
+
+        error = urllib.error.HTTPError("http://x/", 401, "Unauthorized", {}, None)
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=error):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw",
+                                              "basic"), False)
+
+
+class BazarrAuthTests(unittest.TestCase):
+    def test_login_probe_maps_account_statuses(self):
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        return_value=None):
+            self.assertIs(configure.probe_bazarr_login("K", "u", "pw"), True)
+        error = configure.ApiError(403, "Authentication failed")
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=error):
+            self.assertIs(configure.probe_bazarr_login("K", "u", "pw"), False)
+        error = configure.ApiError(None, "connection reset")
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=error):
+            self.assertIsNone(configure.probe_bazarr_login("K", "u", "pw"))
+
+    def test_masked_but_rotated_password_heals_through_probe(self):
+        linked = {"auth": {"type": "form", "username": "u",
+                           "password": "********"}}
+        transport = FakeBazarrTransport(linked)
+        with unittest.mock.patch.object(configure, "bazarr_request", transport), \
+             unittest.mock.patch.object(configure, "probe_bazarr_login",
+                                        side_effect=[False, True]):
+            action = configure.ensure_bazarr_auth(
+                "APIKEY", "u", "pw", "form", False)
+        self.assertEqual(action, "updated")
+        self.assertTrue(any(call[0] == "POST" for call in transport.calls))
+
+    def test_post_update_login_failure_fails(self):
+        virgin = {"auth": {"type": None, "username": "", "password": ""}}
+        linked = {"auth": {"type": "form", "username": "u",
+                           "password": "********"}}
+        gets = []
+
+        def fake_request(method, path, api_key, body=None, form=False):
+            if method == "GET":
+                gets.append(1)
+                return linked if len(gets) > 1 else virgin
+            if path == "/api/system/account":
+                raise configure.ApiError(403, "Authentication failed")
+            return {"ok": True}
+
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=fake_request):
+            with self.assertRaises(SystemExit):
+                configure.ensure_bazarr_auth(
+                    "APIKEY", "u", "pw", "form", False)
+
+    def test_auth_form_uses_api_field_names(self):
+        form = configure.bazarr_auth_form("form", "svc-bazarr", "Pw1!")
+        self.assertEqual(form, {
+            "settings-auth-type": "form",
+            "settings-auth-username": "svc-bazarr",
+            "settings-auth-password": "Pw1!",
+        })
+
+    def test_auth_plan_virgin_masked_and_drift(self):
+        virgin = {"auth": {"type": None, "username": "", "password": ""}}
+        self.assertEqual(
+            configure.plan_bazarr_auth(virgin, "form", "u", "pw"), "updated")
+        masked = {"auth": {"type": "form", "username": "u",
+                           "password": "********"}}
+        self.assertEqual(
+            configure.plan_bazarr_auth(masked, "form", "u", "pw"), "unchanged")
+        drift = {"auth": {"type": "form", "username": "other",
+                          "password": "********"}}
+        self.assertEqual(
+            configure.plan_bazarr_auth(drift, "form", "u", "pw"), "updated")
+
+    def test_ensure_bazarr_auth_posts_and_verifies(self):
+        virgin = {"auth": {"type": None, "username": "", "password": ""}}
+        linked = {"auth": {"type": "form", "username": "u",
+                           "password": "********"}}
+        gets = []
+
+        def fake_request(method, path, api_key, body=None, form=False):
+            if method == "GET":
+                gets.append(1)
+                return linked if len(gets) > 1 else virgin
+            return {"ok": True}
+
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=fake_request):
+            action = configure.ensure_bazarr_auth(
+                "APIKEY", "u", "pw", "form", False)
+        self.assertEqual(action, "updated")
+
+    def test_ensure_bazarr_auth_api_failure_fails_fast_for_retry(self):
+        def fake_request(method, path, api_key, body=None, form=False):
+            if method == "POST":
+                raise configure.ApiError(None, "connection reset")
+            return {"auth": {"type": None, "username": "", "password": ""}}
+
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=fake_request):
+            with self.assertRaises(SystemExit):
+                configure.ensure_bazarr_auth(
+                    "APIKEY", "u", "pw", "form", False)
+
+
 class SummaryShapeTests(unittest.TestCase):
     def test_summary_keys_locked(self):
         summary = configure.build_summary(
@@ -627,10 +873,11 @@ class SummaryShapeTests(unittest.TestCase):
             {"created": 1, "updated": 0, "unchanged": 0},
             {"created": 0, "updated": 0, "unchanged": 0},
             {"created": 0, "updated": 0, "unchanged": 0},
-            "linked", False)
+            "linked", False,
+            {"sonarr": "updated"})
         self.assertEqual(set(summary.keys()),
                          {"dry_run", "versions", "prowlarr_apps",
-                          "download_clients", "root_folders", "bazarr"})
+                          "download_clients", "root_folders", "bazarr", "auth"})
 
     def test_fields_round_trip(self):
         cmap = configure.fields_map(

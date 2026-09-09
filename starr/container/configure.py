@@ -11,14 +11,13 @@ never printed; stdout carries only a JSON summary of actions taken.
 """
 
 import argparse
+import base64
+import http.cookiejar
 import ipaddress
 import json
 import os
 import re
-import stat
-import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -415,6 +414,221 @@ def check_qbit_login(host: str, port: int, username: str, password: str) -> None
          % (host, port, last_error))
 
 
+# --- Per-app login (Forms auth, always required, even on LAN) ---
+
+SONARR_HOST_PATH = "/api/v3/config/host"
+RADARR_HOST_PATH = "/api/v3/config/host"
+PROWLARR_HOST_PATH = "/api/v1/config/host"
+
+SERVARR_AUTH_REQUIRED = "enabled"
+
+
+def parse_auth_file(path: str) -> Dict[str, str]:
+    creds: Dict[str, str] = {}
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for raw in handle:
+            line = raw.rstrip("\r\n")
+            flag = line.strip()
+            if not flag or flag.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            creds[key.strip()] = value
+    return creds
+
+
+def build_servarr_host_config(current: Dict[str, Any], method: str,
+                              username: str, password: str) -> Dict[str, Any]:
+    body = dict(current)
+    body["authenticationMethod"] = method
+    body["authenticationRequired"] = SERVARR_AUTH_REQUIRED
+    body["username"] = username
+    body["password"] = password
+    if "passwordConfirmation" in body:
+        body["passwordConfirmation"] = password
+    return body
+
+
+def plan_servarr_auth(current: Dict[str, Any], method: str,
+                      username: str, password: str) -> str:
+    desired = build_servarr_host_config(current, method, username, password)
+    for key in ("authenticationMethod", "authenticationRequired", "username"):
+        if current.get(key) != desired[key]:
+            return "updated"
+    if not _secret_aware_equal(current.get("password"), password):
+        return "updated"
+    if ("passwordConfirmation" in current
+            and not _secret_aware_equal(current.get("passwordConfirmation"), password)):
+        return "updated"
+    return "unchanged"
+
+
+def build_servarr_login_request(base: str, username: str,
+                                password: str) -> urllib.request.Request:
+    data = urllib.parse.urlencode(
+        {"username": username, "password": password}).encode()
+    req = urllib.request.Request(base + "/login", data=data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Origin", base)
+    req.add_header("Referer", base + "/login")
+    return req
+
+
+def probe_servarr_login(base: str, status_path: str, username: str,
+                        password: str, method: str = "forms") -> Optional[bool]:
+    """Tri-state login probe: True works, False rejected, None transient.
+
+    Forms logins are verified with the session cookie, not the POST status:
+    Servarr answers both good and bad credentials with redirects that land
+    on HTTP 200, so only an authenticated API round-trip proves the password.
+    """
+    if method == "basic":
+        token = base64.b64encode(
+            ("%s:%s" % (username, password)).encode()).decode()
+        req = urllib.request.Request(base + status_path, method="GET")
+        req.add_header("Authorization", "Basic " + token)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return True if resp.status == 200 else None
+        except urllib.error.HTTPError as exc:
+            return False if exc.code in (401, 403) else None
+        except (OSError, TimeoutError, ValueError):
+            return None
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    try:
+        with opener.open(build_servarr_login_request(base, username, password),
+                         timeout=15) as resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        return False if exc.code in (401, 403) else None
+    except (OSError, TimeoutError, ValueError):
+        return None
+    try:
+        with opener.open(base + status_path, timeout=15) as resp:
+            return True if resp.status == 200 else None
+    except urllib.error.HTTPError as exc:
+        return False if exc.code in (401, 403) else None
+    except (OSError, TimeoutError, ValueError):
+        return None
+
+
+def check_servarr_login(base: str, status_path: str, username: str,
+                        password: str, method: str = "forms") -> None:
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        result = probe_servarr_login(base, status_path, username, password, method)
+        if result is True:
+            log("login check ok for %s" % base)
+            return
+        if result is False:
+            fail("login rejected for %s — check username/password" % base)
+        time.sleep(2)
+    fail("login check failed for %s after 30s" % base)
+
+
+def ensure_servarr_auth(app: str, base: str, api_key: str, host_path: str,
+                        method: str, username: str, password: str,
+                        dry_run: bool) -> str:
+    current = servarr_request("GET", base, api_key, host_path) or {}
+    if "id" not in current:
+        fail("%s host config has no id; check its API endpoint" % app)
+    status_path = host_path.replace("config/host", "system/status")
+    action = plan_servarr_auth(current, method, username, password)
+    if action == "unchanged" and not dry_run:
+        if probe_servarr_login(base, status_path, username, password, method):
+            log("%s login already configured" % app)
+            return "unchanged"
+        log("%s login probe failed — updating credentials" % app)
+        action = "updated"
+    if dry_run:
+        log("[dry-run] would %s %s login (user %s)" % (
+            "update" if action == "updated" else "keep", app, username))
+        return "would_update" if action == "updated" else "unchanged"
+    if action == "updated":
+        body = build_servarr_host_config(current, method, username, password)
+        servarr_request("PUT", base, api_key,
+                        "%s/%d" % (host_path, current["id"]), body)
+        log("%s login updated (user %s)" % (app, username))
+    check_servarr_login(base, status_path, username, password, method)
+    return action
+
+
+def bazarr_auth_form(auth_type: str, username: str,
+                     password: str) -> Dict[str, str]:
+    return {"settings-auth-type": auth_type,
+            "settings-auth-username": username,
+            "settings-auth-password": password}
+
+
+def plan_bazarr_auth(settings: Dict[str, Any], auth_type: str,
+                     username: str, password: str) -> str:
+    auth = settings.get("auth", {}) or {}
+    if auth.get("type") != auth_type or auth.get("username") != username:
+        return "updated"
+    if not _secret_aware_equal(auth.get("password"), password):
+        return "updated"
+    return "unchanged"
+
+
+def probe_bazarr_login(api_key: str, username: str,
+                       password: str) -> Optional[bool]:
+    """Tri-state Bazarr credential probe: True works, False rejected, None transient."""
+    try:
+        bazarr_request("POST", "/api/system/account", api_key,
+                       {"action": "login", "username": username,
+                        "password": password}, form=True)
+    except ApiError as exc:
+        return False if exc.status == 403 else None
+    return True
+
+
+def wait_for_bazarr_state(api_key: str, ready: Callable[[Dict[str, Any]], bool],
+                          what: str, timeout: int = 30) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
+            if ready(settings):
+                return True
+        except ApiError as exc:
+            if exc.status in (401, 403, 404):
+                fail("Bazarr %s verification failed with HTTP %s; check its API key and endpoint"
+                     % (what, exc.status))
+        time.sleep(2)
+    return False
+
+
+def ensure_bazarr_auth(api_key: str, username: str, password: str,
+                       auth_type: str, dry_run: bool) -> str:
+    settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
+    action = plan_bazarr_auth(settings, auth_type, username, password)
+    if action == "unchanged":
+        if probe_bazarr_login(api_key, username, password) is not False:
+            log("Bazarr login already configured")
+            return "unchanged"
+        log("Bazarr login probe failed — updating credentials")
+        action = "updated"
+    if dry_run:
+        log("[dry-run] would update Bazarr login (user %s)" % username)
+        return "would_update"
+    try:
+        bazarr_request("POST", "/api/system/settings", api_key,
+                       bazarr_auth_form(auth_type, username, password), form=True)
+    except ApiError as exc:
+        if exc.status in (401, 403):
+            fail("Bazarr auth update rejected with HTTP %s; check its API key" % exc.status)
+        fail("Bazarr auth update failed (%s); re-run once the Bazarr API is reachable" % exc)
+    if wait_for_bazarr_state(
+            api_key,
+            lambda state: plan_bazarr_auth(state, auth_type, username, password) == "unchanged",
+            "auth"):
+        if probe_bazarr_login(api_key, username, password) is not True:
+            fail("Bazarr login verification failed for user %s — check username/password" % username)
+        log("Bazarr login updated via API (user %s)" % username)
+        return "updated"
+    fail("Bazarr auth update did not persist; re-run once the Bazarr API is reachable")
+
+
 def parse_bazarr_yaml(path: str) -> Dict[str, Any]:
     yaml = _ruamel_yaml()
     with open(path, encoding="utf-8", errors="replace") as handle:
@@ -471,38 +685,6 @@ def bazarr_settings_form(sonarr_key: str, radarr_key: str) -> Dict[str, str]:
             for key, value in values.items()}
 
 
-def rewrite_bazarr_yaml(config_path: str, sonarr_key: str, radarr_key: str) -> None:
-    yaml = _ruamel_yaml()
-    with open(config_path, encoding="utf-8", errors="replace") as handle:
-        doc = yaml.load(handle) or {}
-    if not isinstance(doc, dict):
-        fail("unsupported Bazarr config format in %s (expected top-level mapping)" % config_path)
-    original_stat = os.stat(config_path)
-    desired = desired_bazarr_settings(sonarr_key, radarr_key)
-    for section, values in desired.items():
-        node = doc.setdefault(section, {})
-        if not isinstance(node, dict):
-            fail("unsupported Bazarr config format in %s: section '%s' is not a mapping"
-                 % (config_path, section))
-        for key, value in values.items():
-            node[key] = value
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(config_path) or ".",
-                                    prefix=".config.yaml.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            yaml.dump(doc, handle)
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
-        if os.geteuid() == 0:
-            os.chown(tmp_path, original_stat.st_uid, original_stat.st_gid)
-        os.replace(tmp_path, config_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
 def is_bazarr_linked(settings: Dict[str, Any], sonarr_key: str, radarr_key: str) -> bool:
     desired = desired_bazarr_settings(sonarr_key, radarr_key)
     sonarr = settings.get("sonarr", {}) or {}
@@ -524,24 +706,11 @@ def link_bazarr_via_api(api_key: str, sonarr_key: str, radarr_key: str) -> bool:
     except ApiError as exc:
         if exc.status in (401, 403):
             fail("Bazarr settings update rejected with HTTP %s; check its API key" % exc.status)
-        log("Bazarr API update failed (%s) — falling back to config file" % exc)
-        return False
-    return wait_for_bazarr_link(api_key, sonarr_key, radarr_key)
-
-
-def link_bazarr_via_file() -> None:
-    proc = subprocess.run(["systemctl", "restart", "bazarr"])
-    if proc.returncode != 0:
-        fail("bazarr restart failed (exit %d) — fix the service before retrying"
-             % proc.returncode)
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        status = subprocess.run(["systemctl", "is-active", "--quiet", "bazarr"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if status.returncode == 0:
-            return
-        time.sleep(1)
-    fail("bazarr did not become active within 30s after restart")
+        fail("Bazarr settings update failed (%s); re-run once the Bazarr API is reachable" % exc)
+    return wait_for_bazarr_state(
+        api_key,
+        lambda settings: is_bazarr_linked(settings, sonarr_key, radarr_key),
+        "link")
 
 
 def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
@@ -559,22 +728,6 @@ def wait_for_bazarr_settings(api_key: str, timeout: int = 30) -> Dict[str, Any]:
     fail("Bazarr API was not ready after %ds: %s" % (timeout, last))
 
 
-def wait_for_bazarr_link(api_key: str, sonarr_key: str, radarr_key: str,
-                         timeout: int = 30) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
-            if is_bazarr_linked(settings, sonarr_key, radarr_key):
-                return True
-        except ApiError as exc:
-            if exc.status in (401, 403, 404):
-                fail("Bazarr verification failed with HTTP %s; check its API key and endpoint"
-                     % exc.status)
-        time.sleep(2)
-    return False
-
-
 def ensure_bazarr(sonarr_key: str, radarr_key: str,
                   dry_run: bool, config_path: str = BAZARR_CONFIG) -> str:
     api_key = load_bazarr_api_key(config_path)
@@ -588,17 +741,13 @@ def ensure_bazarr(sonarr_key: str, radarr_key: str,
     if link_bazarr_via_api(api_key, sonarr_key, radarr_key):
         log("Bazarr linked to Sonarr/Radarr via API")
         return "linked"
-    rewrite_bazarr_yaml(config_path, sonarr_key, radarr_key)
-    link_bazarr_via_file()
-    if wait_for_bazarr_link(api_key, sonarr_key, radarr_key):
-        log("Bazarr linked to Sonarr/Radarr via config file")
-        return "linked"
-    fail("Bazarr linking did not persist")
+    fail("Bazarr linking did not persist; re-run once the Bazarr API is reachable")
 
 
 def build_summary(versions: Dict[str, str], apps: Dict[str, int],
                   clients: Dict[str, int], folders: Dict[str, int],
-                  bazarr_action: str, dry_run: bool) -> Dict[str, Any]:
+                  bazarr_action: str, dry_run: bool,
+                  auth: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     return {
         "dry_run": dry_run,
         "versions": versions,
@@ -606,6 +755,7 @@ def build_summary(versions: Dict[str, str], apps: Dict[str, int],
         "download_clients": clients,
         "root_folders": folders,
         "bazarr": bazarr_action,
+        "auth": auth or {},
     }
 
 
@@ -635,6 +785,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--qbit-pass-stdin", action="store_true")
     parser.add_argument("--qbit-port", type=valid_port, default=8090)
     parser.add_argument("--data-root", default=DATA_ROOT)
+    parser.add_argument("--skip-auth", action="store_true")
+    parser.add_argument("--auth-file", default=None)
+    parser.add_argument("--auth-method", default="forms",
+                        choices=["forms", "basic"])
     parser.add_argument("--skip-bazarr", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -677,12 +831,42 @@ def main(argv: Optional[List[str]] = None) -> int:
     ensure_prowlarr_app("sonarr", prowlarr_key, sonarr_key, args.dry_run, apps)
     ensure_prowlarr_app("radarr", prowlarr_key, radarr_key, args.dry_run, apps)
 
+    bazarr_config = os.path.join(args.data_root, "bazarr", "config", "config.yaml")
     bazarr_action = "skipped"
     if not args.skip_bazarr:
-        bazarr_config = os.path.join(args.data_root, "bazarr", "config", "config.yaml")
         bazarr_action = ensure_bazarr(sonarr_key, radarr_key, args.dry_run, bazarr_config)
 
-    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run)))
+    auth: Dict[str, str] = {}
+    if args.skip_auth:
+        auth = {app: "skipped" for app in ("prowlarr", "sonarr", "radarr", "bazarr")}
+    else:
+        if not args.auth_file:
+            fail("--auth-file is required unless --skip-auth is passed")
+        creds = parse_auth_file(args.auth_file)
+        missing = [k for k in ("prowlarr_user", "prowlarr_pass", "sonarr_user",
+                               "sonarr_pass", "radarr_user", "radarr_pass",
+                               "bazarr_user", "bazarr_pass") if not creds.get(k)]
+        if missing:
+            fail("auth file is missing: %s" % ", ".join(sorted(missing)))
+        bazarr_type = {"forms": "form", "basic": "basic"}[args.auth_method]
+        auth["prowlarr"] = ensure_servarr_auth(
+            "prowlarr", PROWLARR_BASE, prowlarr_key, PROWLARR_HOST_PATH,
+            args.auth_method, creds["prowlarr_user"], creds["prowlarr_pass"],
+            args.dry_run)
+        auth["sonarr"] = ensure_servarr_auth(
+            "sonarr", SONARR_BASE, sonarr_key, SONARR_HOST_PATH,
+            args.auth_method, creds["sonarr_user"], creds["sonarr_pass"],
+            args.dry_run)
+        auth["radarr"] = ensure_servarr_auth(
+            "radarr", RADARR_BASE, radarr_key, RADARR_HOST_PATH,
+            args.auth_method, creds["radarr_user"], creds["radarr_pass"],
+            args.dry_run)
+        bazarr_api_key = load_bazarr_api_key(bazarr_config)
+        auth["bazarr"] = ensure_bazarr_auth(
+            bazarr_api_key, creds["bazarr_user"], creds["bazarr_pass"],
+            bazarr_type, args.dry_run)
+
+    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth)))
     return 0
 
 
