@@ -141,6 +141,57 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "starr configure forwards per-app auth and skips when requested" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 qbittorrent'
+  export MOCK_PCT_EXEC_HOSTNAME_I="192.168.31.86"
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret \
+    --sonarr-user svc-sonarr --sonarr-pass 'SonarrPw1!' \
+    --radarr-user svc-radarr --radarr-pass 'RadarrPw1!' \
+    --prowlarr-user svc-prowlarr --prowlarr-pass 'ProwlarrPw1!' \
+    --bazarr-user svc-bazarr --bazarr-pass 'BazarrPw1!' 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q -- "--auth-file" "$MOCK_LOG"
+  /usr/bin/grep -q -- "--auth-method forms" "$MOCK_LOG"
+  # Auth secrets travel via pushed file, never in argv/logs or qbit stdout
+  ! /usr/bin/grep -q "SonarrPw1!" "$MOCK_LOG"
+  ! /usr/bin/grep -q "RadarrPw1!" "$MOCK_LOG"
+  [[ "$output" != *"s3cret"* ]]
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret --skip-auth 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q -- "--skip-auth" "$MOCK_LOG"
+}
+
+@test "starr configure generates missing auth passwords and logs them for the password manager" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 qbittorrent'
+  export MOCK_PCT_EXEC_HOSTNAME_I="192.168.31.86"
+  unset STARR_SONARR_PASS STARR_RADARR_PASS STARR_PROWLARR_PASS STARR_BAZARR_PASS
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret 2>&1
+  [ "$status" -eq 0 ]
+  # Generated password is logged so the operator can save it in a password manager
+  [[ "$output" == *"mockBase64Pass123"* ]]
+  # ...but never leaks into the pct mock log (argv)
+  ! /usr/bin/grep -q "mockBase64Pass123" "$MOCK_LOG"
+  [[ "$output" != *"s3cret"* ]]
+}
+
+@test "starr configure accepts auth via env and rejects bad auth method" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 qbittorrent'
+  export MOCK_PCT_EXEC_HOSTNAME_I="192.168.31.86"
+  export STARR_SONARR_PASS="env-sonarr-secret"
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret 2>&1
+  [ "$status" -eq 0 ]
+  ! /usr/bin/grep -q "env-sonarr-secret" "$MOCK_LOG"
+  unset STARR_SONARR_PASS
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret --auth-method digest 2>&1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"auth-method"* ]]
+}
+
 # -------------------------------------------------------------------
 # starr/container/test_configure.py — python unit tests (unittest)
 # -------------------------------------------------------------------

@@ -36,7 +36,11 @@ See `starr/update.sh` for details.
 bash starr/configure.sh --qbit-pass '...'
 ```
 
-See `starr/configure.sh --help` for options.
+Sets up integrations (Prowlarr apps, qBittorrent clients, Bazarr links) and
+per-app logins (Prowlarr/Sonarr/Radarr/Bazarr, Forms auth). Per-app
+`--<app>-user/--<app>-pass` flags (or `STARR_<APP>_USER/PASS` env) override the
+defaults; missing passwords are generated and printed once in the log for your
+password manager. See `starr/configure.sh --help` for options.
 
 ## Ports & Caddy
 
