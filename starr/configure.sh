@@ -44,8 +44,8 @@ usage() {
     echo "  --dry-run            Show planned actions without changing anything (services must still be up; password is not validated in this mode)" >&2
     echo "" >&2
     echo "Notes:" >&2
-    echo "  Auth passwords travel to the container via a 0600 file pushed with" >&2
-    echo "  pct push (never in argv); generated passwords are printed once in" >&2
+    echo "  Auth passwords travel to the container via a file secured to 0600" >&2
+    echo "  inside the guest (never in argv); generated passwords are printed once in" >&2
     echo "  the final log so they can be saved in a password manager." >&2
     echo "  Re-running without explicit passwords generates new ones (rotation);" >&2
     echo "  pass them explicitly to keep the current logins." >&2
@@ -157,7 +157,7 @@ fi
 log_step "Configuring Starr integrations (container $starr_id, qBittorrent at $QBIT_HOST:$QBIT_PORT)..."
 wait_container_ready "$starr_id" || exit 1
 
-REMOTE="/root/starr-configure.py"
+REMOTE="/root/starr-configure-$$.py"
 if ! pct push "$starr_id" "$SCRIPT_DIR/container/configure.py" "$REMOTE"; then
     log_error "Failed to push configure.py to container $starr_id"
     exit 1
@@ -169,7 +169,7 @@ extra_args=()
 [ "$SKIP_BAZARR" -eq 1 ] && extra_args+=(--skip-bazarr)
 [ "$DRY_RUN" -eq 1 ] && extra_args+=(--dry-run)
 
-AUTH_REMOTE="/root/starr-auth.env"
+AUTH_REMOTE="/root/starr-auth-$$.env"
 AUTH_LOCAL=""
 cleanup_auth() {
     [ -n "$AUTH_LOCAL" ] && rm -f "$AUTH_LOCAL"
@@ -191,6 +191,11 @@ if [ "$SKIP_AUTH" -eq 0 ]; then
     } > "$AUTH_LOCAL"
     if ! pct push "$starr_id" "$AUTH_LOCAL" "$AUTH_REMOTE"; then
         log_error "Failed to push auth file to container $starr_id"
+        exit 1
+    fi
+    # pct push does not preserve the source mode; enforce it inside the guest
+    if ! pct exec "$starr_id" -- chmod 600 "$AUTH_REMOTE"; then
+        log_error "Failed to secure auth file inside container $starr_id"
         exit 1
     fi
     extra_args+=(--auth-file "$AUTH_REMOTE")

@@ -58,7 +58,7 @@ teardown() {
   run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret --qbit-user admin 2>&1
   [ "$status" -eq 0 ]
   /usr/bin/grep -q "pct push 105.*container/configure.py" "$MOCK_LOG"
-  /usr/bin/grep -q "python3 /root/starr-configure.py" "$MOCK_LOG"
+  /usr/bin/grep -q "python3 /root/starr-configure-.*\.py" "$MOCK_LOG"
   /usr/bin/grep -q -- "--qbit-pass-stdin" "$MOCK_LOG"
   /usr/bin/grep -q -- "--qbit-user admin" "$MOCK_LOG"
   /usr/bin/grep -q -- "--qbit-port 8090" "$MOCK_LOG"
@@ -105,8 +105,8 @@ teardown() {
 
   run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret --skip-bazarr --dry-run 2>&1
   [ "$status" -eq 0 ]
-  /usr/bin/grep -q "python3 /root/starr-configure.py.*--skip-bazarr" "$MOCK_LOG"
-  /usr/bin/grep -q "python3 /root/starr-configure.py.*--dry-run" "$MOCK_LOG"
+  /usr/bin/grep -q "python3 /root/starr-configure-.*\.py.*--skip-bazarr" "$MOCK_LOG"
+  /usr/bin/grep -q "python3 /root/starr-configure-.*\.py.*--dry-run" "$MOCK_LOG"
   /usr/bin/grep -q -- "--qbit-pass-stdin" "$MOCK_LOG"
   ! /usr/bin/grep -q "s3cret" "$MOCK_LOG"
   [[ "$output" != *"s3cret"* ]]
@@ -153,6 +153,10 @@ teardown() {
   [ "$status" -eq 0 ]
   /usr/bin/grep -q -- "--auth-file" "$MOCK_LOG"
   /usr/bin/grep -q -- "--auth-method forms" "$MOCK_LOG"
+  # Per-invocation remote paths and enforced 0600 on the secret file
+  /usr/bin/grep -q "starr-auth-" "$MOCK_LOG"
+  /usr/bin/grep -q "starr-configure-" "$MOCK_LOG"
+  /usr/bin/grep -q "chmod 600" "$MOCK_LOG"
   # Auth secrets travel via pushed file, never in argv/logs or qbit stdout
   ! /usr/bin/grep -q "SonarrPw1!" "$MOCK_LOG"
   ! /usr/bin/grep -q "RadarrPw1!" "$MOCK_LOG"

@@ -583,6 +583,15 @@ class EnsureFlowTests(unittest.TestCase):
 
 
 class ServarrAuthTests(unittest.TestCase):
+    def test_auth_file_preserves_credential_spacing(self):
+        path = write_temp("sonarr_user= admin \n"
+                          "sonarr_pass= ' s3cret with spaces ' \n"
+                          "# comment line\n"
+                          "\n")
+        creds = configure.parse_auth_file(path)
+        self.assertEqual(creds["sonarr_user"], " admin ")
+        self.assertEqual(creds["sonarr_pass"], " ' s3cret with spaces ' ")
+
     def test_desired_host_config_locks_forms_enabled(self):
         body = configure.build_servarr_host_config(
             {"id": 1, "authenticationMethod": "none",
@@ -681,21 +690,130 @@ class ServarrAuthTests(unittest.TestCase):
             [c for c in transport.calls if c[0] != "GET"], [])
         login.assert_not_called()
 
-    def test_login_accepts_redirect_and_rejects_unauthorized(self):
-        with unittest.mock.patch("urllib.request.urlopen",
-                                 return_value=FakeHTTPResponse(200, "Ok.")):
+class FakeOpener:
+    """Replays urlopen results for cookie-flow probes (responses or exceptions)."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.opened = []
+
+    def open(self, req, timeout=None):
+        self.opened.append(req)
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class ServarrLoginProbeTests(unittest.TestCase):
+    STATUS = "/api/v3/system/status"
+
+    def test_forms_login_accepted_when_status_allows_session(self):
+        opener = FakeOpener([FakeHTTPResponse(200, ""),
+                             FakeHTTPResponse(200, '{"version":"4.0"}')] * 2)
+        with unittest.mock.patch("urllib.request.build_opener",
+                                 return_value=opener):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"), True)
             self.assertIsNone(
                 configure.check_servarr_login("http://localhost:8989",
-                                              "u", "pw"))
-        for code in (401, 403):
-            error = urllib.error.HTTPError("http://x/", code, "Denied", {}, None)
-            with unittest.mock.patch("urllib.request.urlopen", side_effect=error):
-                with self.assertRaises(SystemExit):
-                    configure.check_servarr_login("http://localhost:8989",
-                                                  "u", "pw")
+                                              self.STATUS, "u", "pw"))
+        self.assertEqual(len(opener.opened), 4)
+
+    def test_forms_login_rejected_when_status_denies_session(self):
+        opener = FakeOpener([FakeHTTPResponse(302, ""),
+                             urllib.error.HTTPError("http://x/", 401,
+                                                    "Unauthorized", {}, None)])
+        with unittest.mock.patch("urllib.request.build_opener",
+                                 return_value=opener):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"), False)
+        with unittest.mock.patch.object(configure, "probe_servarr_login",
+                                        return_value=False) as probe:
+            with self.assertRaises(SystemExit):
+                configure.check_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw")
+            probe.assert_called_once()
+
+    def test_forms_login_transient_when_service_unreachable(self):
+        opener = FakeOpener([OSError("connection refused")])
+        with unittest.mock.patch("urllib.request.build_opener",
+                                 return_value=opener):
+            self.assertIsNone(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"))
+
+    def test_basic_login_uses_authorization_header(self):
+        seen = []
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req)
+            return FakeHTTPResponse(200, '{"version":"4.0"}')
+
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 side_effect=fake_urlopen):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw",
+                                              "basic"), True)
+        self.assertTrue(seen[0].get_header("Authorization").startswith("Basic "))
+
+        error = urllib.error.HTTPError("http://x/", 401, "Unauthorized", {}, None)
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=error):
+            self.assertIs(
+                configure.probe_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw",
+                                              "basic"), False)
 
 
 class BazarrAuthTests(unittest.TestCase):
+    def test_login_probe_maps_account_statuses(self):
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        return_value=None):
+            self.assertIs(configure.probe_bazarr_login("K", "u", "pw"), True)
+        error = configure.ApiError(403, "Authentication failed")
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=error):
+            self.assertIs(configure.probe_bazarr_login("K", "u", "pw"), False)
+        error = configure.ApiError(None, "connection reset")
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=error):
+            self.assertIsNone(configure.probe_bazarr_login("K", "u", "pw"))
+
+    def test_masked_but_rotated_password_heals_through_probe(self):
+        linked = {"auth": {"type": "form", "username": "u",
+                           "password": "********"}}
+        transport = FakeBazarrTransport(linked)
+        with unittest.mock.patch.object(configure, "bazarr_request", transport), \
+             unittest.mock.patch.object(configure, "probe_bazarr_login",
+                                        side_effect=[False, True]):
+            action = configure.ensure_bazarr_auth(
+                "APIKEY", "u", "pw", "form", False)
+        self.assertEqual(action, "updated")
+        self.assertTrue(any(call[0] == "POST" for call in transport.calls))
+
+    def test_post_update_login_failure_fails(self):
+        virgin = {"auth": {"type": None, "username": "", "password": ""}}
+        linked = {"auth": {"type": "form", "username": "u",
+                           "password": "********"}}
+        gets = []
+
+        def fake_request(method, path, api_key, body=None, form=False):
+            if method == "GET":
+                gets.append(1)
+                return linked if len(gets) > 1 else virgin
+            if path == "/api/system/account":
+                raise configure.ApiError(403, "Authentication failed")
+            return {"ok": True}
+
+        with unittest.mock.patch.object(configure, "bazarr_request",
+                                        side_effect=fake_request):
+            with self.assertRaises(SystemExit):
+                configure.ensure_bazarr_auth(
+                    "APIKEY", "u", "pw", "form", False)
+
     def test_auth_form_uses_api_field_names(self):
         form = configure.bazarr_auth_form("form", "svc-bazarr", "Pw1!")
         self.assertEqual(form, {

@@ -11,6 +11,8 @@ never printed; stdout carries only a JSON summary of actions taken.
 """
 
 import argparse
+import base64
+import http.cookiejar
 import ipaddress
 import json
 import os
@@ -424,12 +426,13 @@ SERVARR_AUTH_REQUIRED = "enabled"
 def parse_auth_file(path: str) -> Dict[str, str]:
     creds: Dict[str, str] = {}
     with open(path, encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
+        for raw in handle:
+            line = raw.rstrip("\r\n")
+            flag = line.strip()
+            if not flag or flag.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            creds[key.strip()] = value.strip()
+            creds[key.strip()] = value
     return creds
 
 
@@ -470,42 +473,57 @@ def build_servarr_login_request(base: str, username: str,
     return req
 
 
-def probe_servarr_login(base: str, username: str, password: str) -> bool:
-    try:
-        with urllib.request.urlopen(
-                build_servarr_login_request(base, username, password),
-                timeout=15) as resp:
-            return resp.status in (200, 302)
-    except urllib.error.HTTPError as exc:
-        return exc.code in (301, 302, 303, 307, 308)
-    except (OSError, TimeoutError, ValueError):
-        return False
+def probe_servarr_login(base: str, status_path: str, username: str,
+                        password: str, method: str = "forms") -> Optional[bool]:
+    """Tri-state login probe: True works, False rejected, None transient.
 
-
-def check_servarr_login(base: str, username: str, password: str) -> None:
-    deadline = time.time() + 30
-    last_error: Optional[Exception] = None
-    while time.time() < deadline:
+    Forms logins are verified with the session cookie, not the POST status:
+    Servarr answers both good and bad credentials with redirects that land
+    on HTTP 200, so only an authenticated API round-trip proves the password.
+    """
+    if method == "basic":
+        token = base64.b64encode(
+            ("%s:%s" % (username, password)).encode()).decode()
+        req = urllib.request.Request(base + status_path, method="GET")
+        req.add_header("Authorization", "Basic " + token)
         try:
-            with urllib.request.urlopen(
-                    build_servarr_login_request(base, username, password),
-                    timeout=15) as resp:
-                if resp.status in (200, 302):
-                    log("login check ok for %s" % base)
-                    return
-                last_error = "HTTP %s" % resp.status
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return True if resp.status == 200 else None
         except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
-                fail("login rejected for %s (HTTP %s) — check username/password"
-                     % (base, exc.code))
-            if exc.code in (301, 302, 303, 307, 308):
-                log("login check ok for %s" % base)
-                return
-            last_error = "HTTP %s" % exc.code
-        except (OSError, TimeoutError, ValueError) as exc:
-            last_error = exc
+            return False if exc.code in (401, 403) else None
+        except (OSError, TimeoutError, ValueError):
+            return None
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    try:
+        with opener.open(build_servarr_login_request(base, username, password),
+                         timeout=15) as resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        return False if exc.code in (401, 403) else None
+    except (OSError, TimeoutError, ValueError):
+        return None
+    try:
+        with opener.open(base + status_path, timeout=15) as resp:
+            return True if resp.status == 200 else None
+    except urllib.error.HTTPError as exc:
+        return False if exc.code in (401, 403) else None
+    except (OSError, TimeoutError, ValueError):
+        return None
+
+
+def check_servarr_login(base: str, status_path: str, username: str,
+                        password: str, method: str = "forms") -> None:
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        result = probe_servarr_login(base, status_path, username, password, method)
+        if result is True:
+            log("login check ok for %s" % base)
+            return
+        if result is False:
+            fail("login rejected for %s — check username/password" % base)
         time.sleep(2)
-    fail("login check failed for %s after 30s: %s" % (base, last_error))
+    fail("login check failed for %s after 30s" % base)
 
 
 def ensure_servarr_auth(app: str, base: str, api_key: str, host_path: str,
@@ -514,9 +532,10 @@ def ensure_servarr_auth(app: str, base: str, api_key: str, host_path: str,
     current = servarr_request("GET", base, api_key, host_path) or {}
     if "id" not in current:
         fail("%s host config has no id; check its API endpoint" % app)
+    status_path = host_path.replace("config/host", "system/status")
     action = plan_servarr_auth(current, method, username, password)
     if action == "unchanged" and not dry_run:
-        if probe_servarr_login(base, username, password):
+        if probe_servarr_login(base, status_path, username, password, method):
             log("%s login already configured" % app)
             return "unchanged"
         log("%s login probe failed — updating credentials" % app)
@@ -530,7 +549,7 @@ def ensure_servarr_auth(app: str, base: str, api_key: str, host_path: str,
         servarr_request("PUT", base, api_key,
                         "%s/%d" % (host_path, current["id"]), body)
         log("%s login updated (user %s)" % (app, username))
-    check_servarr_login(base, username, password)
+    check_servarr_login(base, status_path, username, password, method)
     return action
 
 
@@ -549,6 +568,18 @@ def plan_bazarr_auth(settings: Dict[str, Any], auth_type: str,
     if not _secret_aware_equal(auth.get("password"), password):
         return "updated"
     return "unchanged"
+
+
+def probe_bazarr_login(api_key: str, username: str,
+                       password: str) -> Optional[bool]:
+    """Tri-state Bazarr credential probe: True works, False rejected, None transient."""
+    try:
+        bazarr_request("POST", "/api/system/account", api_key,
+                       {"action": "login", "username": username,
+                        "password": password}, form=True)
+    except ApiError as exc:
+        return False if exc.status == 403 else None
+    return True
 
 
 def wait_for_bazarr_state(api_key: str, ready: Callable[[Dict[str, Any]], bool],
@@ -572,8 +603,11 @@ def ensure_bazarr_auth(api_key: str, username: str, password: str,
     settings = bazarr_request("GET", "/api/system/settings", api_key) or {}
     action = plan_bazarr_auth(settings, auth_type, username, password)
     if action == "unchanged":
-        log("Bazarr login already configured")
-        return "unchanged"
+        if probe_bazarr_login(api_key, username, password) is not False:
+            log("Bazarr login already configured")
+            return "unchanged"
+        log("Bazarr login probe failed — updating credentials")
+        action = "updated"
     if dry_run:
         log("[dry-run] would update Bazarr login (user %s)" % username)
         return "would_update"
@@ -586,8 +620,10 @@ def ensure_bazarr_auth(api_key: str, username: str, password: str,
         fail("Bazarr auth update failed (%s); re-run once the Bazarr API is reachable" % exc)
     if wait_for_bazarr_state(
             api_key,
-            lambda settings: plan_bazarr_auth(settings, auth_type, username, password) == "unchanged",
+            lambda state: plan_bazarr_auth(state, auth_type, username, password) == "unchanged",
             "auth"):
+        if probe_bazarr_login(api_key, username, password) is not True:
+            fail("Bazarr login verification failed for user %s — check username/password" % username)
         log("Bazarr login updated via API (user %s)" % username)
         return "updated"
     fail("Bazarr auth update did not persist; re-run once the Bazarr API is reachable")
