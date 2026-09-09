@@ -38,3 +38,5 @@
   - After migration, create `/opt/ncdata/data/tmp` and run `occ files:scan --all` to keep the file cache consistent with disk.
   - Add the container root UID (host UID 100000) to ZFS ACLs so `pct exec` commands work without "Permission denied" on the mounted dataset.
 
+- **Servarr forms-login verification must judge the POST, never the API:** good credentials answer `POST /login` with 302 to `/` plus a session cookie (`*Auth`), bad ones bounce back to `/login` (`loginFailed`) with none. Servarr `/api/*` routes only accept the API key — never the session cookie — so a cookie round-trip against the API always 401s (even for correct passwords) and can never prove anything. (Python's `http.cookiejar` additionally mangles dotless `localhost` into `localhost.local` and won't send the cookie back; parsing `Set-Cookie` from the login response avoids the quirk entirely.)
+

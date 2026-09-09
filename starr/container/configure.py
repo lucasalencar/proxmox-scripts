@@ -12,7 +12,6 @@ never printed; stdout carries only a JSON summary of actions taken.
 
 import argparse
 import base64
-import http.cookiejar
 import ipaddress
 import json
 import os
@@ -473,13 +472,35 @@ def build_servarr_login_request(base: str, username: str,
     return req
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _set_cookie_names(headers: Any) -> List[str]:
+    try:
+        raw = headers.get_all("Set-Cookie") or []
+    except AttributeError:
+        single = headers.get("Set-Cookie")
+        raw = [single] if single else []
+    names = []
+    for entry in raw:
+        name, _, _ = entry.partition("=")
+        name = name.strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def probe_servarr_login(base: str, status_path: str, username: str,
                         password: str, method: str = "forms") -> Optional[bool]:
     """Tri-state login probe: True works, False rejected, None transient.
 
-    Forms logins are verified with the session cookie, not the POST status:
-    Servarr answers both good and bad credentials with redirects that land
-    on HTTP 200, so only an authenticated API round-trip proves the password.
+    Forms logins are judged by the login POST itself: good credentials
+    answer 302 to "/" and set the session cookie (*Auth), bad ones bounce
+    back to /login (loginFailed) with no cookie. The JSON API is deliberately
+    not used: Servarr API routes only accept the API key, never the session
+    cookie, so a cookie round-trip there can never succeed.
     """
     if method == "basic":
         token = base64.b64encode(
@@ -493,28 +514,43 @@ def probe_servarr_login(base: str, status_path: str, username: str,
             return False if exc.code in (401, 403) else None
         except (OSError, TimeoutError, ValueError):
             return None
-    opener = urllib.request.build_opener(
-        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    opener = urllib.request.build_opener(_NoRedirect())
     try:
         with opener.open(build_servarr_login_request(base, username, password),
                          timeout=15) as resp:
             resp.read()
+            return None
     except urllib.error.HTTPError as exc:
-        return False if exc.code in (401, 403) else None
-    except (OSError, TimeoutError, ValueError):
+        if exc.code in (401, 403):
+            return False
+        if exc.code not in (301, 302, 303, 307, 308):
+            return None
+        try:
+            headers = exc.headers or {}
+            location = headers.get("Location", "") or ""
+            names = _set_cookie_names(headers)
+        except (AttributeError, ValueError):
+            return None
+        if "login" in location:
+            return False
+        if any(name.endswith("Auth") for name in names):
+            return True
         return None
-    try:
-        with opener.open(base + status_path, timeout=15) as resp:
-            return True if resp.status == 200 else None
-    except urllib.error.HTTPError as exc:
-        return False if exc.code in (401, 403) else None
     except (OSError, TimeoutError, ValueError):
         return None
 
 
 def check_servarr_login(base: str, status_path: str, username: str,
-                        password: str, method: str = "forms") -> None:
-    deadline = time.time() + 30
+                        password: str, method: str = "forms",
+                        timeout: int = 30) -> None:
+    """Verify the app login, failing fast on rejection.
+
+    The probe judges the login POST deterministically (redirect target +
+    session cookie), so False means wrong credentials and aborts
+    immediately; only transient results (service unreachable, timeouts)
+    are retried until the timeout expires.
+    """
+    deadline = time.time() + timeout
     while time.time() < deadline:
         result = probe_servarr_login(base, status_path, username, password, method)
         if result is True:
@@ -523,7 +559,7 @@ def check_servarr_login(base: str, status_path: str, username: str,
         if result is False:
             fail("login rejected for %s — check username/password" % base)
         time.sleep(2)
-    fail("login check failed for %s after 30s" % base)
+    fail("login check failed for %s after %ds" % (base, timeout))
 
 
 def ensure_servarr_auth(app: str, base: str, api_key: str, host_path: str,

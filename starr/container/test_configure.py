@@ -9,13 +9,17 @@ they run in full inside the starr LXC where provision.sh installs it.
 
 import argparse
 import copy
+import http.server
 import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 import unittest.mock
 import urllib.error
+import urllib.parse
+from email.message import Message
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -708,23 +712,27 @@ class FakeOpener:
 class ServarrLoginProbeTests(unittest.TestCase):
     STATUS = "/api/v3/system/status"
 
-    def test_forms_login_accepted_when_status_allows_session(self):
-        opener = FakeOpener([FakeHTTPResponse(200, ""),
-                             FakeHTTPResponse(200, '{"version":"4.0"}')] * 2)
+    @staticmethod
+    def _login_redirect(location, cookies=()):
+        headers = Message()
+        headers["Location"] = location
+        for name, value in cookies:
+            headers["Set-Cookie"] = "%s=%s; path=/; httponly" % (name, value)
+        return urllib.error.HTTPError("http://x/login", 302, "Found",
+                                      headers, None)
+
+    def test_forms_login_accepted_on_app_redirect_with_session_cookie(self):
+        opener = FakeOpener(
+            [self._login_redirect("/", [("SonarrAuth", "abc123")])])
         with unittest.mock.patch("urllib.request.build_opener",
                                  return_value=opener):
             self.assertIs(
                 configure.probe_servarr_login("http://localhost:8989",
                                               self.STATUS, "u", "pw"), True)
-            self.assertIsNone(
-                configure.check_servarr_login("http://localhost:8989",
-                                              self.STATUS, "u", "pw"))
-        self.assertEqual(len(opener.opened), 4)
 
-    def test_forms_login_rejected_when_status_denies_session(self):
-        opener = FakeOpener([FakeHTTPResponse(302, ""),
-                             urllib.error.HTTPError("http://x/", 401,
-                                                    "Unauthorized", {}, None)])
+    def test_forms_login_rejected_on_login_redirect_without_cookie(self):
+        opener = FakeOpener(
+            [self._login_redirect("/login?returnUrl=&loginFailed=true")])
         with unittest.mock.patch("urllib.request.build_opener",
                                  return_value=opener):
             self.assertIs(
@@ -736,6 +744,25 @@ class ServarrLoginProbeTests(unittest.TestCase):
                 configure.check_servarr_login("http://localhost:8989",
                                               self.STATUS, "u", "pw")
             probe.assert_called_once()
+
+    def test_forms_login_transient_outage_recovers_with_retry(self):
+        # Unreachable service (None) is retried; success on the third
+        # attempt must not fail.
+        with unittest.mock.patch.object(configure, "probe_servarr_login",
+                                        side_effect=[None, None, True]) as probe, \
+             unittest.mock.patch("time.sleep", return_value=None):
+            self.assertIsNone(
+                configure.check_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw"))
+            self.assertEqual(probe.call_count, 3)
+
+    def test_forms_login_prolonged_outage_fails_after_timeout(self):
+        with unittest.mock.patch.object(configure, "probe_servarr_login",
+                                        return_value=None):
+            with self.assertRaises(SystemExit):
+                configure.check_servarr_login("http://localhost:8989",
+                                              self.STATUS, "u", "pw",
+                                              timeout=2)
 
     def test_forms_login_transient_when_service_unreachable(self):
         opener = FakeOpener([OSError("connection refused")])
@@ -766,6 +793,83 @@ class ServarrLoginProbeTests(unittest.TestCase):
                 configure.probe_servarr_login("http://localhost:8989",
                                               self.STATUS, "u", "pw",
                                               "basic"), False)
+
+
+class ServarrFormsLoopbackTests(unittest.TestCase):
+    """End-to-end forms probe against a real loopback server mimicking the
+    observed Servarr behavior: the login POST 302s to "/" with a session
+    cookie on good credentials (back to /login without one on bad), while
+    the JSON API only accepts the API key and always 401s on cookie auth.
+    """
+
+    USER = "loopback-admin"
+    PASS = "s3cret!"
+
+    STATUS = "/api/v1/system/status"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        server_version = "LoopbackServarr/1.0"
+
+        def _send(self, code, headers, body=b""):
+            self.send_response(code)
+            for name, value in headers:
+                self.send_header(name, value)
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler naming
+            length = int(self.headers.get("Content-Length", 0))
+            fields = urllib.parse.parse_qs(
+                self.rfile.read(length).decode())
+            outer = self.server.outer
+            if (self.path == "/login"
+                    and fields.get("username") == [outer.USER]
+                    and fields.get("password") == [outer.PASS]):
+                self._send(302, [("Location", "/"),
+                                 ("Set-Cookie",
+                                  "LoopbackAuth=abc123; path=/; "
+                                  "samesite=lax; httponly")])
+            else:
+                self._send(302, [("Location",
+                                  "/login?returnUrl=&loginFailed=true")])
+
+        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler naming
+            if self.path == self.server.outer.STATUS:
+                self._send(401, [])
+            else:
+                self._send(200, [], b"app")
+
+        def log_message(self, *args):
+            pass
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = http.server.HTTPServer(("127.0.0.1", 0), cls.Handler)
+        cls.server.outer = cls
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever,
+                                      daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join()
+        cls.server.server_close()
+
+    def base(self):
+        return "http://localhost:%d" % self.port
+
+    def test_probe_accepts_correct_credentials(self):
+        self.assertIs(
+            configure.probe_servarr_login(self.base(), self.STATUS,
+                                          self.USER, self.PASS), True)
+
+    def test_probe_rejects_wrong_credentials(self):
+        self.assertIs(
+            configure.probe_servarr_login(self.base(), self.STATUS,
+                                          self.USER, "wrong"), False)
 
 
 class BazarrAuthTests(unittest.TestCase):
