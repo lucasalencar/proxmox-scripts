@@ -20,6 +20,7 @@ BAZARR_PASS="${STARR_BAZARR_PASS:-}"
 AUTH_METHOD="forms"
 SKIP_AUTH=0
 SKIP_BAZARR=0
+SKIP_FLARESOLVERR=0
 DRY_RUN=0
 
 usage() {
@@ -41,6 +42,7 @@ usage() {
     echo "  --auth-method <m>    Servarr auth method: forms|basic (default: $AUTH_METHOD)" >&2
     echo "  --skip-auth          Skip per-app login configuration" >&2
     echo "  --skip-bazarr        Skip Bazarr Sonarr/Radarr linking" >&2
+    echo "  --skip-flaresolverr  Skip Prowlarr FlareSolverr proxy + indexer tagging" >&2
     echo "  --dry-run            Show planned actions without changing anything (services must still be up; password is not validated in this mode)" >&2
     echo "" >&2
     echo "Notes:" >&2
@@ -79,6 +81,7 @@ while [ $# -gt 0 ]; do
         --auth-method) need_value "$1" "${2:-}"; AUTH_METHOD="$2"; shift 2 ;;
         --skip-auth) SKIP_AUTH=1; shift ;;
         --skip-bazarr) SKIP_BAZARR=1; shift ;;
+        --skip-flaresolverr) SKIP_FLARESOLVERR=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;
@@ -167,6 +170,7 @@ extra_args=()
 [ "$SKIP_AUTH" -eq 1 ] && extra_args+=(--skip-auth)
 [ "$SKIP_AUTH" -eq 0 ] && extra_args+=(--auth-method "$AUTH_METHOD")
 [ "$SKIP_BAZARR" -eq 1 ] && extra_args+=(--skip-bazarr)
+[ "$SKIP_FLARESOLVERR" -eq 1 ] && extra_args+=(--skip-flaresolverr)
 [ "$DRY_RUN" -eq 1 ] && extra_args+=(--dry-run)
 
 AUTH_REMOTE="/root/starr-auth-$$.env"
@@ -221,4 +225,5 @@ if [ "$SKIP_AUTH" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
     log_success "  Bazarr:   user='$BAZARR_USER' pass='$BAZARR_PASS'"
 fi
 log_info "Verify: Prowlarr Settings -> Apps, Sonarr/Radarr Settings -> Download Clients -> Test,"
+log_info "  Prowlarr Settings -> Indexers -> Indexer Proxies -> FlareSolverr -> Test,"
 log_info "  Bazarr Settings -> Sonarr/Radarr -> Test connection."

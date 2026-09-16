@@ -70,8 +70,36 @@ else
     log "bazarr not installed — skipping"
 fi
 
+# FlareSolverr has no self-update: replace /opt with the latest prebuilt release
+if [ -f /etc/systemd/system/flaresolverr.service ]; then
+    log "Refreshing FlareSolverr..."
+    fs_tmpdir=$(mktemp -d)
+    if curl -fsSL -o "$fs_tmpdir/flaresolverr.tar.gz" \
+        "https://github.com/FlareSolverr/FlareSolverr/releases/latest/download/flaresolverr_linux_x64.tar.gz"; then
+        systemctl stop flaresolverr 2>/dev/null || true
+        find /opt/flaresolverr -mindepth 1 -delete 2>/dev/null || rm -rf /opt/flaresolverr/* 2>/dev/null || true
+        mkdir -p /opt/flaresolverr
+        tar --no-same-owner -xzf "$fs_tmpdir/flaresolverr.tar.gz" -C /opt/flaresolverr --strip-components=1
+        chmod 755 /opt/flaresolverr/flaresolverr
+        if ! systemctl restart flaresolverr 2>/dev/null; then
+            systemctl start flaresolverr
+        fi
+    else
+        log "  failed to fetch the FlareSolverr release — keeping the installed version"
+    fi
+    rm -rf "$fs_tmpdir"
+    if systemctl is-active --quiet flaresolverr; then
+        log "  flaresolverr: active"
+    else
+        log "  flaresolverr: not active after restart"
+    fi
+else
+    log "flaresolverr not installed — skipping"
+fi
+
 log "Update check complete. Service status:"
 systemctl is-active --quiet prowlarr && log "  prowlarr: active" || log "  prowlarr: inactive"
 systemctl is-active --quiet sonarr && log "  sonarr: active" || log "  sonarr: inactive"
 systemctl is-active --quiet radarr && log "  radarr: active" || log "  radarr: inactive"
 systemctl is-active --quiet bazarr && log "  bazarr: active" || log "  bazarr: inactive"
+systemctl is-active --quiet flaresolverr && log "  flaresolverr: active" || log "  flaresolverr: inactive"

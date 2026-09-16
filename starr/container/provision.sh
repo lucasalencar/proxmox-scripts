@@ -117,6 +117,93 @@ fetch_bazarr() {
     log "  Deployed bazarr to $target"
 }
 
+# FlareSolverr ships a prebuilt bundle that already contains Chromium (x64 only)
+fetch_flaresolverr() {
+    local target="$1"        # e.g. /opt/flaresolverr
+    local dl_url="https://github.com/FlareSolverr/FlareSolverr/releases/latest/download/flaresolverr_linux_x64.tar.gz"
+
+    log "Fetching FlareSolverr..."
+    log "  URL: $dl_url"
+
+    local tmpdir=$(mktemp -d)
+    local archive="$tmpdir/flaresolverr.tar.gz"
+    curl -fsSL -o "$archive" "$dl_url"
+
+    if [ -d "$target" ] && [ "$(ls -A "$target" 2>/dev/null)" ]; then
+        log "  Clearing $target (CLEAN_INSTALL)"
+        find "$target" -mindepth 1 -delete 2>/dev/null || rm -rf "${target:?}/"* 2>/dev/null || true
+    fi
+    mkdir -p "$target"
+
+    # The archive wraps everything in a single top-level dir
+    tar --no-same-owner -xzf "$archive" -C "$target" --strip-components=1
+    chmod 755 "$target/flaresolverr"
+    rm -rf "$tmpdir"
+    log "  Deployed FlareSolverr to $target"
+}
+
+# Wait until FlareSolverr answers its health endpoint
+# Usage: wait_flaresolverr [timeout_seconds]
+wait_flaresolverr() {
+    local timeout="${1:-120}"
+    local started=$SECONDS
+    while [ $((SECONDS - started)) -lt "$timeout" ]; do
+        if curl -fsS "http://127.0.0.1:8191/health" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
+# Prowlarr reaches FlareSolverr over loopback, so it is never published through Caddy
+install_flaresolverr() {
+    local unit="/etc/systemd/system/flaresolverr.service"
+
+    if [ "$SERVARR_ARCH" != "x64" ]; then
+        log "FlareSolverr prebuilt binaries are x64-only — skipping on $SERVARR_ARCH"
+        return 0
+    fi
+    if [ -f "$unit" ]; then
+        log "FlareSolverr already installed — skipping"
+        return 0
+    fi
+
+    # Chromium provides the shared libs the bundled browser links against; xvfb backs HEADLESS=true
+    apt install -y xvfb chromium
+
+    fetch_flaresolverr "/opt/flaresolverr"
+
+    cat >"$unit" <<EOF
+[Unit]
+Description=FlareSolverr Daemon
+After=syslog.target network.target
+
+[Service]
+SyslogIdentifier=flaresolverr
+Environment="LOG_LEVEL=info"
+Environment="CAPTCHA_SOLVER=none"
+Environment="HOST=127.0.0.1"
+Environment="PORT=8191"
+WorkingDirectory=/opt/flaresolverr
+ExecStart=/opt/flaresolverr/flaresolverr
+Restart=always
+RestartSec=5
+Type=simple
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now flaresolverr
+    if wait_flaresolverr; then
+        log "FlareSolverr installed and answering on 127.0.0.1:8191"
+    else
+        log "  FlareSolverr installed but not answering yet — check: journalctl -u flaresolverr"
+    fi
+}
+
 # Install a Servarr app idempotently: fetch tarball, write systemd unit, enable + start
 # Usage: install_servarr_app <App> <service> <dl_url> <target> <data_dir> <exec_start> [umask]
 install_servarr_app() {
@@ -197,8 +284,11 @@ else
     log "Bazarr already installed — skipping"
 fi
 
+install_flaresolverr
+
 log "All Starr apps installed. Checking services..."
 systemctl is-active --quiet prowlarr && log "  prowlarr: active" || log "  prowlarr: not active"
 systemctl is-active --quiet sonarr && log "  sonarr: active" || log "  sonarr: not active"
 systemctl is-active --quiet radarr && log "  radarr: active" || log "  radarr: not active"
 systemctl is-active --quiet bazarr && log "  bazarr: active" || log "  bazarr: not active"
+systemctl is-active --quiet flaresolverr && log "  flaresolverr: active" || log "  flaresolverr: not active"

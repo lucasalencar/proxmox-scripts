@@ -174,3 +174,70 @@ teardown() {
   run bash -n "$REPO_ROOT/starr/container/update.sh"
   [ "$status" -eq 0 ]
 }
+
+# -------------------------------------------------------------------
+# FlareSolverr — Cloudflare solver for Prowlarr
+# -------------------------------------------------------------------
+
+@test "starr container provision.sh installs FlareSolverr from the prebuilt release" {
+  /usr/bin/grep -q "flaresolverr_linux_x64.tar.gz" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q 'install_flaresolverr' "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q "/opt/flaresolverr/flaresolverr" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q "systemctl enable --now flaresolverr" "$REPO_ROOT/starr/container/provision.sh"
+  # Chromium supplies the shared libs the bundled browser links against; xvfb backs HEADLESS=true
+  /usr/bin/grep -q "apt install -y xvfb chromium" "$REPO_ROOT/starr/container/provision.sh"
+  run bash -n "$REPO_ROOT/starr/container/provision.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "starr container provision.sh keeps FlareSolverr on loopback so Caddy must not proxy it" {
+  /usr/bin/grep -q 'Environment="HOST=127.0.0.1"' "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q 'Environment="PORT=8191"' "$REPO_ROOT/starr/container/provision.sh"
+}
+
+@test "starr container provision.sh skips FlareSolverr where no prebuilt binary exists" {
+  /usr/bin/grep -q "x64-only" "$REPO_ROOT/starr/container/provision.sh"
+}
+
+@test "starr container provision.sh reports FlareSolverr in the final service status" {
+  /usr/bin/grep -q "systemctl is-active --quiet flaresolverr" "$REPO_ROOT/starr/container/provision.sh"
+}
+
+@test "starr wait_flaresolverr polls the health endpoint until it answers" {
+  # Only the helper is evaluated — the rest of provision.sh installs packages
+  eval "$(awk '/^wait_flaresolverr\(\)/,/^}/' "$REPO_ROOT/starr/container/provision.sh")"
+  sleep() { :; }
+
+  polls=0
+  curl() { polls=$((polls + 1)); return 0; }
+  status=0; wait_flaresolverr || status=$?
+  [ "$status" -eq 0 ]
+  [ "$polls" -eq 1 ]
+
+  polls=0
+  curl() { polls=$((polls + 1)); return 1; }
+  status=0; wait_flaresolverr 1 || status=$?
+  [ "$status" -eq 1 ]
+  [ "$polls" -gt 1 ]
+}
+
+@test "starr container update.sh refreshes the FlareSolverr release" {
+  /usr/bin/grep -q "flaresolverr_linux_x64.tar.gz" "$REPO_ROOT/starr/container/update.sh"
+  /usr/bin/grep -q "/opt/flaresolverr" "$REPO_ROOT/starr/container/update.sh"
+  /usr/bin/grep -q "systemctl restart flaresolverr" "$REPO_ROOT/starr/container/update.sh"
+  run bash -n "$REPO_ROOT/starr/container/update.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "starr install.sh advertises FlareSolverr as internal-only" {
+  /usr/bin/grep -q "8191" "$REPO_ROOT/starr/install.sh"
+  /usr/bin/grep -qi "no caddy" "$REPO_ROOT/starr/install.sh"
+}
+
+@test "starr README documents FlareSolverr port, Caddy exclusion and Prowlarr tagging" {
+  /usr/bin/grep -q "8191" "$REPO_ROOT/starr/README.md"
+  /usr/bin/grep -qi "flaresolverr" "$REPO_ROOT/starr/README.md"
+  /usr/bin/grep -qi "indexer prox" "$REPO_ROOT/starr/README.md"
+  /usr/bin/grep -qi "matching tags" "$REPO_ROOT/starr/README.md"
+  /usr/bin/grep -q "127.0.0.1:8191/health" "$REPO_ROOT/starr/README.md"
+}

@@ -1006,16 +1006,159 @@ class SummaryShapeTests(unittest.TestCase):
             {"created": 0, "updated": 0, "unchanged": 0},
             {"created": 0, "updated": 0, "unchanged": 0},
             "linked", False,
-            {"sonarr": "updated"})
+            {"sonarr": "updated"},
+            "configured")
         self.assertEqual(set(summary.keys()),
                          {"dry_run", "versions", "prowlarr_apps",
-                          "download_clients", "root_folders", "bazarr", "auth"})
+                          "download_clients", "root_folders", "bazarr", "auth",
+                          "flaresolverr"})
+        self.assertEqual(summary["flaresolverr"], "configured")
 
     def test_fields_round_trip(self):
         cmap = configure.fields_map(
             configure.build_download_client("sonarr", HOST, 8090, "admin", "pw"))
         self.assertEqual(configure.fields_map({"fields": configure.fields_list(cmap)}),
                          cmap)
+
+
+class FakeProwlarrTransport:
+    """Path-routed Prowlarr fake: serves tags/proxies/indexers, records writes.
+
+    POSTs to the tag endpoint mutate the served tag list so the read-back after
+    creation behaves like the real API.
+    """
+
+    def __init__(self, tags=None, proxies=None, indexers=None):
+        self.tags = [dict(t) for t in (tags or [])]
+        self.proxies = [dict(p) for p in (proxies or [])]
+        self.indexers = [dict(i) for i in (indexers or [])]
+        self.calls = []
+
+    def __call__(self, method, base, api_key, path, body=None):
+        self.calls.append((method, path, body))
+        route = path.split("?")[0]
+        if method == "GET":
+            if route == configure.PROWLARR_TAG_PATH:
+                return copy.deepcopy(self.tags)
+            if route == configure.PROWLARR_INDEXER_PROXY_PATH:
+                return copy.deepcopy(self.proxies)
+            if route == configure.PROWLARR_INDEXER_PATH:
+                return copy.deepcopy(self.indexers)
+            return []
+        if route == configure.PROWLARR_TAG_PATH:
+            next_id = max([t.get("id", 0) for t in self.tags] + [0]) + 1
+            self.tags.append({"id": next_id, "label": body["label"]})
+            return {"id": next_id}
+        return {"id": 1}
+
+    def writes(self):
+        return [call for call in self.calls if call[0] != "GET"]
+
+    def write_paths(self):
+        return [call[1] for call in self.writes()]
+
+
+FLARESOLVERR_PROXY_EXISTING = {
+    "id": 9,
+    "name": "FlareSolverr",
+    "implementation": "FlareSolverr",
+    "implementationName": "FlareSolverr",
+    "configContract": "FlareSolverrSettings",
+    "tags": [7],
+    "fields": [{"name": "host", "value": configure.FLARESOLVERR_HOST},
+               {"name": "requestTimeout",
+                "value": configure.FLARESOLVERR_REQUEST_TIMEOUT}],
+}
+
+
+class FlareSolverrTests(unittest.TestCase):
+    def setUp(self):
+        self._orig = configure.servarr_request
+        self.addCleanup(setattr, configure, "servarr_request", self._orig)
+
+    def connect(self, transport, healthy=True):
+        configure.servarr_request = transport
+        patcher = unittest.mock.patch.object(configure, "probe_flaresolverr",
+                                             return_value=healthy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_builder_shape_matches_prowlarr_flare_solverr_settings(self):
+        proxy = configure.build_flaresolverr_proxy([7])
+        self.assertEqual(proxy["implementation"], "FlareSolverr")
+        self.assertEqual(proxy["implementationName"], "FlareSolverr")
+        self.assertEqual(proxy["configContract"], "FlareSolverrSettings")
+        self.assertEqual(proxy["name"], "FlareSolverr")
+        self.assertEqual(proxy["tags"], [7])
+        fields = configure.fields_map(proxy)
+        self.assertEqual(fields["host"], configure.FLARESOLVERR_HOST)
+        self.assertEqual(fields["requestTimeout"],
+                         configure.FLARESOLVERR_REQUEST_TIMEOUT)
+        self.assertEqual(set(fields), {"host", "requestTimeout"})
+
+    def test_creates_tag_proxy_and_tags_enabled_indexers(self):
+        transport = FakeProwlarrTransport(
+            proxies=[],
+            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": []},
+                      {"id": 2, "name": "YTS", "enable": True, "tags": [3]},
+                      {"id": 3, "name": "Disabled", "enable": False, "tags": []}])
+        self.connect(transport)
+
+        self.assertEqual(configure.ensure_flaresolverr("KEY", False),
+                         "configured")
+
+        self.assertEqual(transport.write_paths(), [
+            configure.PROWLARR_TAG_PATH,
+            configure.PROWLARR_INDEXER_PROXY_PATH + "?forceSave=true",
+            configure.PROWLARR_INDEXER_BULK_PATH,
+        ])
+        proxy_body = transport.writes()[1][2]
+        self.assertEqual(proxy_body["tags"], [1])
+        bulk_body = transport.writes()[2][2]
+        self.assertEqual(bulk_body["ids"], [1, 2])
+        self.assertEqual(bulk_body["tags"], [1])
+        self.assertEqual(bulk_body["applyTags"], "add")
+
+    def test_unchanged_when_proxy_and_indexers_already_tagged(self):
+        transport = FakeProwlarrTransport(
+            tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
+            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)],
+            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": [7]}])
+        self.connect(transport)
+
+        self.assertEqual(configure.ensure_flaresolverr("KEY", False),
+                         "unchanged")
+        self.assertEqual(transport.writes(), [])
+
+    def test_dry_run_writes_nothing_and_plans_both_sides(self):
+        transport = FakeProwlarrTransport(
+            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": []}])
+        self.connect(transport)
+
+        self.assertEqual(configure.ensure_flaresolverr("KEY", True),
+                         "would_configure")
+        self.assertEqual(transport.writes(), [])
+
+    def test_unavailable_flaresolverr_skips_without_writes(self):
+        transport = FakeProwlarrTransport()
+        self.connect(transport, healthy=False)
+
+        self.assertEqual(configure.ensure_flaresolverr("KEY", False),
+                         "unavailable")
+        self.assertEqual(transport.calls, [])
+
+    def test_tag_creation_that_does_not_persist_fails(self):
+        class StubbornTags(FakeProwlarrTransport):
+            def __call__(self, method, base, api_key, path, body=None):
+                if method == "GET" and path.split("?")[0] == configure.PROWLARR_TAG_PATH:
+                    return []
+                return super().__call__(method, base, api_key, path, body)
+
+        transport = StubbornTags()
+        self.connect(transport)
+
+        with self.assertRaises(SystemExit):
+            configure.ensure_flaresolverr("KEY", False)
 
 
 if __name__ == "__main__":

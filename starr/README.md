@@ -36,8 +36,9 @@ See `starr/update.sh` for details.
 bash starr/configure.sh --qbit-pass '...'
 ```
 
-Sets up integrations (Prowlarr apps, qBittorrent clients, Bazarr links) and
-per-app logins (Prowlarr/Sonarr/Radarr/Bazarr, Forms auth). Per-app
+Sets up integrations (Prowlarr apps, qBittorrent clients, FlareSolverr proxy and
+indexer tags, Bazarr links) and per-app logins
+(Prowlarr/Sonarr/Radarr/Bazarr, Forms auth). Per-app
 `--<app>-user/--<app>-pass` flags (or `STARR_<APP>_USER/PASS` env) override the
 defaults; missing passwords are generated and printed once in the log for your
 password manager. See `starr/configure.sh --help` for options.
@@ -50,8 +51,11 @@ password manager. See `starr/configure.sh --help` for options.
 | Sonarr | 8989 | `sonarr.marx.home` |
 | Radarr | 7878 | `radarr.marx.home` |
 | Bazarr | 6767 | `bazarr.marx.home` |
+| FlareSolverr | 8191 | none — loopback only (`127.0.0.1`) |
 
-Single CT = single IP, 4 ports. `caddy/generate-caddyfile.sh:138` only auto-detects one port per CT (`ss -tlnp | head -1`), so you must add 4 entries manually after generation.
+Single CT = single IP, 4 public ports. `caddy/generate-caddyfile.sh:138` only auto-detects one port per CT (`ss -tlnp | head -1`), so you must add 4 entries manually after generation.
+
+FlareSolverr is deliberately bound to `127.0.0.1`: only Prowlarr (same CT) talks to it, so it must **not** get a Caddy entry and is never exposed on the LAN.
 
 Append to `caddy/Caddyfile.local` (replace `<IP>` with `starr` IP from install log):
 
@@ -112,6 +116,14 @@ Follow the install log plus:
 - Settings -> Apps -> Add Sonarr/Radarr: `http://localhost:8989` and `http://localhost:7878` (same CT, localhost is fastest)
 - Add indexers, then sync to Sonarr/Radarr
 
+#### FlareSolverr (Cloudflare-protected indexers)
+
+Indexers like 1337x sit behind Cloudflare and fail Prowlarr's Test until FlareSolverr handles the challenge. `starr/container/provision.sh` installs it and `starr/configure.sh` wires it into Prowlarr on every run: it creates the `flaresolverr` tag, points the FlareSolverr indexer proxy at `http://localhost:8191`, and applies that tag to every enabled indexer. Pass `--skip-flaresolverr` to leave Prowlarr untouched.
+
+Tags are what enable the proxy: Prowlarr keeps it disabled unless the proxy and at least one indexer carry matching tags, so both sides always get one. Prowlarr only routes a request through FlareSolverr when it detects a Cloudflare challenge, so tagged indexers behave normally otherwise. To scope the proxy to a subset instead, remove the tag from the indexers that don't need it.
+
+FlareSolverr is third-party software and upstream reports Cloudflare actively targets it; if it stops solving challenges, try another base URL for the affected indexer instead.
+
 ### 3. Sonarr / Radarr
 
 - Settings -> Media Management -> Root Folder: `/data/media/Series` and `/data/media/Movies`
@@ -133,8 +145,9 @@ Already mounted `jellyfin/install.sh:26` at `/DATA/Media` and `/DATA/Gallery`. A
 
 ```bash
 # Inside starr CT
-pct exec $(pct list | grep -i starr | awk "{print \$1}") -- systemctl status prowlarr sonarr radarr bazarr
-pct exec $(pct list | grep -i starr | awk "{print \$1}") -- ss -tlnp | grep -E "9696|8989|7878|6767"
+pct exec $(pct list | grep -i starr | awk "{print \$1}") -- systemctl status prowlarr sonarr radarr bazarr flaresolverr
+pct exec $(pct list | grep -i starr | awk "{print \$1}") -- ss -tlnp | grep -E "9696|8989|7878|6767|8191"
+pct exec $(pct list | grep -i starr | awk "{print \$1}") -- curl -fsS http://127.0.0.1:8191/health
 # Host ACL check
 getfacl /tank/data/mediaserver | grep -E "1000|100000|10[0-9]{4}"
 # Hardlink test (inside CT): ln /data/downloads/series/test.mkv /data/media/Series/test.mkv && ls -i both should share inode
