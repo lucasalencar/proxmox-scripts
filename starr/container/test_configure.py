@@ -8,8 +8,10 @@ they run in full inside the starr LXC where provision.sh installs it.
 """
 
 import argparse
+import contextlib
 import copy
 import http.server
+import io
 import json
 import os
 import sys
@@ -290,6 +292,10 @@ class ValidPortHostTests(unittest.TestCase):
             configure.parse_args(["--qbit-port", "0"])
         with self.assertRaises(SystemExit):
             configure.parse_args(["--qbit-host", "nope"])
+
+    def test_skip_qbit_flag_defaults_off(self):
+        self.assertFalse(configure.parse_args([]).skip_qbit)
+        self.assertTrue(configure.parse_args(["--skip-qbit"]).skip_qbit)
 
 
 @unittest.skipUnless(configure.HAVE_RUAMEL, "ruamel.yaml not installed")
@@ -1007,12 +1013,13 @@ class SummaryShapeTests(unittest.TestCase):
             {"created": 0, "updated": 0, "unchanged": 0},
             "linked", False,
             {"sonarr": "updated"},
-            "configured")
+            "configured", "configured")
         self.assertEqual(set(summary.keys()),
                          {"dry_run", "versions", "prowlarr_apps",
                           "download_clients", "root_folders", "bazarr", "auth",
-                          "flaresolverr"})
+                          "flaresolverr", "qbit"})
         self.assertEqual(summary["flaresolverr"], "configured")
+        self.assertEqual(summary["qbit"], "configured")
 
     def test_fields_round_trip(self):
         cmap = configure.fields_map(
@@ -1159,6 +1166,57 @@ class FlareSolverrTests(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             configure.ensure_flaresolverr("KEY", False)
+
+
+class MainQbitSkipTests(unittest.TestCase):
+    """main() orchestration for --skip-qbit: every transport and service call is mocked."""
+
+    def run_main(self, argv, stdin):
+        out = io.StringIO()
+        with unittest.mock.patch.object(configure, "read_api_key", return_value="KEY"), \
+             unittest.mock.patch.object(configure, "wait_healthy",
+                                        return_value={"version": "1"}), \
+             unittest.mock.patch.object(configure, "check_qbit_login") as login, \
+             unittest.mock.patch.object(configure, "ensure_root_folder") as root, \
+             unittest.mock.patch.object(configure, "ensure_download_client") as client, \
+             unittest.mock.patch.object(configure, "ensure_prowlarr_app"), \
+             unittest.mock.patch.object(configure, "ensure_bazarr",
+                                        return_value="unchanged"), \
+             unittest.mock.patch.object(configure, "ensure_flaresolverr",
+                                        return_value="unchanged"), \
+             unittest.mock.patch.object(configure.sys, "stdin", stdin), \
+             contextlib.redirect_stdout(out):
+            configure.main(argv)
+        return ({"login": login, "root": root, "client": client},
+                json.loads(out.getvalue()))
+
+    def test_skip_qbit_skips_client_and_login(self):
+        stdin = unittest.mock.Mock()
+        mocks, summary = self.run_main(["--skip-qbit", "--skip-auth"], stdin)
+
+        mocks["login"].assert_not_called()
+        mocks["client"].assert_not_called()
+        # The password is never read from stdin when the client is skipped
+        stdin.readline.assert_not_called()
+        # Root folders are independent of the download client
+        self.assertEqual(mocks["root"].call_count, 2)
+        self.assertEqual(summary["qbit"], "skipped")
+        self.assertEqual(summary["download_clients"],
+                         {"created": 0, "updated": 0, "unchanged": 0})
+
+    def test_without_skip_qbit_password_is_read_and_client_configured(self):
+        stdin = unittest.mock.Mock()
+        stdin.readline.return_value = "pw\n"
+        mocks, summary = self.run_main(
+            ["--qbit-host", "1.2.3.4", "--qbit-pass-stdin", "--skip-auth"], stdin)
+
+        mocks["login"].assert_called_once()
+        self.assertEqual(mocks["client"].call_count, 2)
+        self.assertEqual(summary["qbit"], "configured")
+
+    def test_missing_qbit_credentials_fail_without_the_flag(self):
+        with self.assertRaises(SystemExit):
+            self.run_main(["--skip-auth"], unittest.mock.Mock())
 
 
 if __name__ == "__main__":

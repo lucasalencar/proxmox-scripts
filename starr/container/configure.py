@@ -933,7 +933,8 @@ def build_summary(versions: Dict[str, str], apps: Dict[str, int],
                   clients: Dict[str, int], folders: Dict[str, int],
                   bazarr_action: str, dry_run: bool,
                   auth: Optional[Dict[str, str]] = None,
-                  flaresolverr_action: str = "skipped") -> Dict[str, Any]:
+                  flaresolverr_action: str = "skipped",
+                  qbit_action: str = "skipped") -> Dict[str, Any]:
     return {
         "dry_run": dry_run,
         "versions": versions,
@@ -943,6 +944,7 @@ def build_summary(versions: Dict[str, str], apps: Dict[str, int],
         "bazarr": bazarr_action,
         "auth": auth or {},
         "flaresolverr": flaresolverr_action,
+        "qbit": qbit_action,
     }
 
 
@@ -978,25 +980,28 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         choices=["forms", "basic"])
     parser.add_argument("--skip-bazarr", action="store_true")
     parser.add_argument("--skip-flaresolverr", action="store_true")
+    parser.add_argument("--skip-qbit", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
-    if not args.qbit_host:
-        fail("--qbit-host is required")
-    if not args.qbit_pass_stdin:
-        fail("--qbit-pass-stdin is required")
-    args.qbit_pass = sys.stdin.readline().rstrip("\r\n")
-    if not args.qbit_pass:
-        fail("qBittorrent password was not provided on stdin")
+    args.qbit_pass = ""
+    if not args.skip_qbit:
+        if not args.qbit_host:
+            fail("--qbit-host is required unless --skip-qbit is passed")
+        if not args.qbit_pass_stdin:
+            fail("--qbit-pass-stdin is required unless --skip-qbit is passed")
+        args.qbit_pass = sys.stdin.readline().rstrip("\r\n")
+        if not args.qbit_pass:
+            fail("qBittorrent password was not provided on stdin")
 
     prowlarr_key = read_api_key(args.data_root, "prowlarr")
     sonarr_key = read_api_key(args.data_root, "sonarr")
     radarr_key = read_api_key(args.data_root, "radarr")
 
-    if not args.dry_run:
+    if not args.skip_qbit and not args.dry_run:
         check_qbit_login(args.qbit_host, args.qbit_port, args.qbit_user, args.qbit_pass)
 
     versions = {}
@@ -1010,12 +1015,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     ensure_root_folder(SONARR_BASE, sonarr_key, SONARR_ROOT, args.dry_run, folders)
     ensure_root_folder(RADARR_BASE, radarr_key, RADARR_ROOT, args.dry_run, folders)
-    ensure_download_client("sonarr", SONARR_BASE, sonarr_key, args.qbit_host,
-                           args.qbit_port, args.qbit_user, args.qbit_pass,
-                           args.dry_run, clients)
-    ensure_download_client("radarr", RADARR_BASE, radarr_key, args.qbit_host,
-                           args.qbit_port, args.qbit_user, args.qbit_pass,
-                           args.dry_run, clients)
+    qbit_action = "skipped"
+    if not args.skip_qbit:
+        ensure_download_client("sonarr", SONARR_BASE, sonarr_key, args.qbit_host,
+                               args.qbit_port, args.qbit_user, args.qbit_pass,
+                               args.dry_run, clients)
+        ensure_download_client("radarr", RADARR_BASE, radarr_key, args.qbit_host,
+                               args.qbit_port, args.qbit_user, args.qbit_pass,
+                               args.dry_run, clients)
+        qbit_action = "would_configure" if args.dry_run else "configured"
     ensure_prowlarr_app("sonarr", prowlarr_key, sonarr_key, args.dry_run, apps)
     ensure_prowlarr_app("radarr", prowlarr_key, radarr_key, args.dry_run, apps)
 
@@ -1058,7 +1066,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             bazarr_api_key, creds["bazarr_user"], creds["bazarr_pass"],
             bazarr_type, args.dry_run)
 
-    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth, flaresolverr_action)))
+    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth, flaresolverr_action, qbit_action)))
     return 0
 
 

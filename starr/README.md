@@ -43,6 +43,14 @@ indexer tags, Bazarr links) and per-app logins
 defaults; missing passwords are generated and printed once in the log for your
 password manager. See `starr/configure.sh --help` for options.
 
+Each integration can be left untouched: `--skip-qbit`, `--skip-auth`,
+`--skip-bazarr`, `--skip-flaresolverr`. To add just one thing to an existing
+stack, combine them — for example, wiring only FlareSolverr:
+
+```bash
+bash starr/configure.sh --skip-qbit --skip-auth
+```
+
 ## Ports & Caddy
 
 | Service | Port | Hostname |
