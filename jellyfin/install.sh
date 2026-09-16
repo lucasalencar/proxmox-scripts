@@ -18,7 +18,10 @@ host_jellyfin_uid=$(get_host_uid "$container_id" jellyfin) || exit 1
 log_info "Jellyfin host UID: $host_jellyfin_uid"
 
 # 3. APPLY Specific ACLs for Jellyfin UID on Host
-add_dataset_acl "/tank/data/mediaserver/media" "$host_jellyfin_uid"
+# Parent dataset (not just media/): *arr hardlinks from downloads/ into
+# media/ preserving the source inode ACL, so a grant on media/ alone never
+# reaches imported files. Same convention as starr/qbittorrent/casa-os.
+add_dataset_acl "/tank/data/mediaserver" "$host_jellyfin_uid"
 add_dataset_acl "/tank/data/memorias" "$host_jellyfin_uid"
 
 # 4. Perform bind mounts (stops, sets, restarts, and waits for ready)

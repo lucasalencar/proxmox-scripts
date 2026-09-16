@@ -41,6 +41,21 @@ teardown() {
   grep -q "pct set 101 -mp2 /tank/data/memorias,mp=/DATA/Gallery" "$MOCK_LOG"
 }
 
+@test "jellyfin install grants ACL on whole mediaserver dataset" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n101        running                 jellyfin'
+  export MOCK_PCT_CONFIG="hostname: jellyfin"
+  export MOCK_PCT_EXEC_ID_U_jellyfin="1000"
+
+  run bash "$REPO_ROOT/jellyfin/install.sh"
+  [ "$status" -eq 0 ]
+  # Sonarr hardlinks from downloads/ into media/, preserving the source
+  # inode ACL — so the grant must cover the parent dataset, not just
+  # media/ (same convention as starr/qbittorrent/casa-os).
+  # Anchored ^setfacl + real grep: the mock grep logs its own argv
+  # into MOCK_LOG, so an unanchored pattern would self-match.
+  /usr/bin/grep -q "^setfacl.* /tank/data/mediaserver$" "$MOCK_LOG"
+}
+
 @test "jellyfin install discovers host UID correctly" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n101        running                 jellyfin'
   export MOCK_PCT_CONFIG="hostname: jellyfin"
