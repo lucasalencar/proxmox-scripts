@@ -85,6 +85,7 @@ if [ -n "$container_ip" ]; then
     log_info "     sonarr.marx.home   -> ${container_ip}:8989"
     log_info "     radarr.marx.home   -> ${container_ip}:7878"
     log_info "     bazarr.marx.home   -> ${container_ip}:6767"
+    log_info "     FlareSolverr listens on 127.0.0.1:8191 for Prowlarr only — no Caddy entry."
     log_info "     Run: bash caddy/generate-caddyfile.sh and answer 4 times for 'starr' when prompted for ports."
     echo ""
     log_info "  2. Configure qBittorrent categories to match (already done via qbittorrent/install.sh:40):"
