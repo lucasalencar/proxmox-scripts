@@ -225,6 +225,9 @@ teardown() {
   /usr/bin/grep -q "flaresolverr_linux_x64.tar.gz" "$REPO_ROOT/starr/container/update.sh"
   /usr/bin/grep -q "/opt/flaresolverr" "$REPO_ROOT/starr/container/update.sh"
   /usr/bin/grep -q "systemctl restart flaresolverr" "$REPO_ROOT/starr/container/update.sh"
+  # The release is staged and validated before the live dir is touched
+  /usr/bin/grep -q "tar --no-same-owner -tzf" "$REPO_ROOT/starr/container/update.sh"
+  /usr/bin/grep -q "keeping the installed version" "$REPO_ROOT/starr/container/update.sh"
   run bash -n "$REPO_ROOT/starr/container/update.sh"
   [ "$status" -eq 0 ]
 }

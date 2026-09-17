@@ -64,7 +64,7 @@ PROWLARR_INDEXER_PROXY_PATH = "/api/v1/indexerproxy"
 # would otherwise be created disabled. Health is verified directly instead.
 PROWLARR_FORCE_SAVE = "?forceSave=true"
 
-FLARESOLVERR_HOST = "http://localhost:8191"
+FLARESOLVERR_HOST = "http://127.0.0.1:8191"
 FLARESOLVERR_HEALTH_URL = FLARESOLVERR_HOST + "/health"
 FLARESOLVERR_REQUEST_TIMEOUT = 60
 FLARESOLVERR_TAG_LABEL = "flaresolverr"
@@ -514,6 +514,8 @@ def ensure_flaresolverr(api_key: str, dry_run: bool) -> str:
         log("[dry-run] would %s tag '%s', %s proxy, tag %d enabled indexer(s)"
             % ("create" if tag_action == "created" else "keep",
                FLARESOLVERR_TAG_LABEL, proxy_action, indexer_count))
+        if proxy_action == "unchanged" and indexer_action == "unchanged":
+            return "unchanged"
         return "would_configure"
     log("Prowlarr FlareSolverr: tag %s, proxy %s, %d indexer(s) %s"
         % (tag_action, proxy_action, indexer_count, indexer_action))
@@ -1023,7 +1025,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         ensure_download_client("radarr", RADARR_BASE, radarr_key, args.qbit_host,
                                args.qbit_port, args.qbit_user, args.qbit_pass,
                                args.dry_run, clients)
-        qbit_action = "would_configure" if args.dry_run else "configured"
+        if not clients["created"] and not clients["updated"]:
+            qbit_action = "unchanged"
+        elif args.dry_run:
+            qbit_action = "would_configure"
+        else:
+            qbit_action = "configured"
     ensure_prowlarr_app("sonarr", prowlarr_key, sonarr_key, args.dry_run, apps)
     ensure_prowlarr_app("radarr", prowlarr_key, radarr_key, args.dry_run, apps)
 

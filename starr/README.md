@@ -126,9 +126,9 @@ Follow the install log plus:
 
 #### FlareSolverr (Cloudflare-protected indexers)
 
-Indexers like 1337x sit behind Cloudflare and fail Prowlarr's Test until FlareSolverr handles the challenge. `starr/container/provision.sh` installs it and `starr/configure.sh` wires it into Prowlarr on every run: it creates the `flaresolverr` tag, points the FlareSolverr indexer proxy at `http://localhost:8191`, and applies that tag to every enabled indexer. Pass `--skip-flaresolverr` to leave Prowlarr untouched.
+Indexers like 1337x sit behind Cloudflare and fail Prowlarr's Test until FlareSolverr handles the challenge. `starr/container/provision.sh` installs it and `starr/configure.sh` wires it into Prowlarr on every run: it creates the `flaresolverr` tag, points the FlareSolverr indexer proxy at `http://127.0.0.1:8191`, and applies that tag to every enabled indexer. Pass `--skip-flaresolverr` to leave Prowlarr untouched.
 
-Tags are what enable the proxy: Prowlarr keeps it disabled unless the proxy and at least one indexer carry matching tags, so both sides always get one. Prowlarr only routes a request through FlareSolverr when it detects a Cloudflare challenge, so tagged indexers behave normally otherwise. To scope the proxy to a subset instead, remove the tag from the indexers that don't need it.
+Tags are what enable the proxy: Prowlarr keeps it disabled unless the proxy and at least one indexer carry matching tags, so both sides always get one. Prowlarr only routes a request through FlareSolverr when it detects a Cloudflare challenge, so tagged indexers behave normally otherwise. To scope the proxy to a subset instead, remove the tag from the indexers that don't need it — but re-runs re-apply it to every enabled indexer, so keep passing `--skip-flaresolverr` afterwards to preserve a manual scope. The proxy's own tags are fully managed: extras added in the UI are removed on the next run.
 
 FlareSolverr is third-party software and upstream reports Cloudflare actively targets it; if it stops solving challenges, try another base URL for the affected indexer instead.
 

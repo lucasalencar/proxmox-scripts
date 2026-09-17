@@ -70,28 +70,38 @@ else
     log "bazarr not installed — skipping"
 fi
 
-# FlareSolverr has no self-update: replace /opt with the latest prebuilt release
+# FlareSolverr has no self-update: stage the latest prebuilt release, validate it,
+# then swap it into place so a failed download never empties /opt
 if [ -f /etc/systemd/system/flaresolverr.service ]; then
     log "Refreshing FlareSolverr..."
     fs_tmpdir=$(mktemp -d)
+    fs_stage="$fs_tmpdir/stage"
+    mkdir -p "$fs_stage"
+    refreshed=0
     if curl -fsSL -o "$fs_tmpdir/flaresolverr.tar.gz" \
-        "https://github.com/FlareSolverr/FlareSolverr/releases/latest/download/flaresolverr_linux_x64.tar.gz"; then
+        "https://github.com/FlareSolverr/FlareSolverr/releases/latest/download/flaresolverr_linux_x64.tar.gz" \
+        && tar --no-same-owner -tzf "$fs_tmpdir/flaresolverr.tar.gz" >/dev/null \
+        && tar --no-same-owner -xzf "$fs_tmpdir/flaresolverr.tar.gz" -C "$fs_stage" --strip-components=1 \
+        && [ -x "$fs_stage/flaresolverr" ]; then
         systemctl stop flaresolverr 2>/dev/null || true
         find /opt/flaresolverr -mindepth 1 -delete 2>/dev/null || rm -rf /opt/flaresolverr/* 2>/dev/null || true
         mkdir -p /opt/flaresolverr
-        tar --no-same-owner -xzf "$fs_tmpdir/flaresolverr.tar.gz" -C /opt/flaresolverr --strip-components=1
+        cp -r "$fs_stage"/. /opt/flaresolverr/
         chmod 755 /opt/flaresolverr/flaresolverr
         if ! systemctl restart flaresolverr 2>/dev/null; then
             systemctl start flaresolverr
         fi
+        refreshed=1
     else
-        log "  failed to fetch the FlareSolverr release — keeping the installed version"
+        log "  failed to fetch a valid FlareSolverr release — keeping the installed version"
     fi
     rm -rf "$fs_tmpdir"
     if systemctl is-active --quiet flaresolverr; then
         log "  flaresolverr: active"
-    else
+    elif [ "$refreshed" -eq 1 ]; then
         log "  flaresolverr: not active after restart"
+    else
+        log "  flaresolverr: untouched (still on the previous version)"
     fi
 else
     log "flaresolverr not installed — skipping"

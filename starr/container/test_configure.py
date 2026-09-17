@@ -1099,6 +1099,7 @@ class FlareSolverrTests(unittest.TestCase):
         self.assertEqual(proxy["tags"], [7])
         fields = configure.fields_map(proxy)
         self.assertEqual(fields["host"], configure.FLARESOLVERR_HOST)
+        self.assertIn("127.0.0.1", fields["host"])
         self.assertEqual(fields["requestTimeout"],
                          configure.FLARESOLVERR_REQUEST_TIMEOUT)
         self.assertEqual(set(fields), {"host", "requestTimeout"})
@@ -1146,6 +1147,36 @@ class FlareSolverrTests(unittest.TestCase):
                          "would_configure")
         self.assertEqual(transport.writes(), [])
 
+    def test_dry_run_reports_unchanged_when_converged(self):
+        transport = FakeProwlarrTransport(
+            tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
+            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)],
+            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": [7]}])
+        self.connect(transport)
+
+        self.assertEqual(configure.ensure_flaresolverr("KEY", True),
+                         "unchanged")
+        self.assertEqual(transport.writes(), [])
+
+    def test_drifted_proxy_is_updated_through_ensure(self):
+        drifted = copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)
+        drifted["fields"] = [{"name": "host", "value": "http://old:8191"},
+                             {"name": "requestTimeout", "value": 60}]
+        transport = FakeProwlarrTransport(
+            tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
+            proxies=[drifted],
+            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": [7]}])
+        self.connect(transport)
+
+        self.assertEqual(configure.ensure_flaresolverr("KEY", False),
+                         "configured")
+        puts = [call for call in transport.writes() if call[0] == "PUT"]
+        self.assertEqual(len(puts), 1)
+        self.assertIn("/api/v1/indexerproxy/9", puts[0][1])
+        self.assertTrue(puts[0][1].endswith("?forceSave=true"))
+        self.assertEqual(configure.fields_map(puts[0][2])["host"],
+                         configure.FLARESOLVERR_HOST)
+
     def test_unavailable_flaresolverr_skips_without_writes(self):
         transport = FakeProwlarrTransport()
         self.connect(transport, healthy=False)
@@ -1153,6 +1184,37 @@ class FlareSolverrTests(unittest.TestCase):
         self.assertEqual(configure.ensure_flaresolverr("KEY", False),
                          "unavailable")
         self.assertEqual(transport.calls, [])
+
+    def test_probe_maps_statuses_and_errors(self):
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 return_value=FakeHTTPResponse(200, "{}")):
+            self.assertTrue(configure.probe_flaresolverr())
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 return_value=FakeHTTPResponse(500, "boom")):
+            self.assertFalse(configure.probe_flaresolverr())
+        for error in (urllib.error.URLError("refused"),
+                      TimeoutError("timed out")):
+            with unittest.mock.patch("urllib.request.urlopen",
+                                     side_effect=error):
+                self.assertFalse(configure.probe_flaresolverr())
+
+    def test_find_tag_id_matches_case_insensitively(self):
+        tags = [{"id": 7, "label": "FlareSolverr"}]
+        self.assertEqual(configure.find_tag_id(tags, "flaresolverr"), 7)
+        self.assertIsNone(configure.find_tag_id(tags, "other"))
+        self.assertIsNone(configure.find_tag_id([], "flaresolverr"))
+
+    def test_no_indexers_means_no_bulk_write(self):
+        transport = FakeProwlarrTransport(
+            tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
+            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)],
+            indexers=[])
+        self.connect(transport)
+
+        self.assertEqual(
+            configure.ensure_flaresolverr_indexer_tags("KEY", 7, False),
+            ("unchanged", 0))
+        self.assertEqual(transport.writes(), [])
 
     def test_tag_creation_that_does_not_persist_fails(self):
         class StubbornTags(FakeProwlarrTransport):
@@ -1171,14 +1233,15 @@ class FlareSolverrTests(unittest.TestCase):
 class MainQbitSkipTests(unittest.TestCase):
     """main() orchestration for --skip-qbit: every transport and service call is mocked."""
 
-    def run_main(self, argv, stdin):
+    def run_main(self, argv, stdin, client_side_effect=None):
         out = io.StringIO()
         with unittest.mock.patch.object(configure, "read_api_key", return_value="KEY"), \
              unittest.mock.patch.object(configure, "wait_healthy",
                                         return_value={"version": "1"}), \
              unittest.mock.patch.object(configure, "check_qbit_login") as login, \
              unittest.mock.patch.object(configure, "ensure_root_folder") as root, \
-             unittest.mock.patch.object(configure, "ensure_download_client") as client, \
+             unittest.mock.patch.object(configure, "ensure_download_client",
+                                        side_effect=client_side_effect) as client, \
              unittest.mock.patch.object(configure, "ensure_prowlarr_app"), \
              unittest.mock.patch.object(configure, "ensure_bazarr",
                                         return_value="unchanged"), \
@@ -1201,22 +1264,48 @@ class MainQbitSkipTests(unittest.TestCase):
         # Root folders are independent of the download client
         self.assertEqual(mocks["root"].call_count, 2)
         self.assertEqual(summary["qbit"], "skipped")
-        self.assertEqual(summary["download_clients"],
-                         {"created": 0, "updated": 0, "unchanged": 0})
 
-    def test_without_skip_qbit_password_is_read_and_client_configured(self):
+    def test_without_skip_qbit_credentials_reach_the_client(self):
         stdin = unittest.mock.Mock()
         stdin.readline.return_value = "pw\n"
         mocks, summary = self.run_main(
             ["--qbit-host", "1.2.3.4", "--qbit-pass-stdin", "--skip-auth"], stdin)
 
-        mocks["login"].assert_called_once()
+        mocks["login"].assert_called_once_with("1.2.3.4", 8090, "admin", "pw")
         self.assertEqual(mocks["client"].call_count, 2)
+        sonarr_call = mocks["client"].call_args_list[0][0]
+        self.assertEqual(sonarr_call[:7],
+                         ("sonarr", configure.SONARR_BASE, "KEY",
+                          "1.2.3.4", 8090, "admin", "pw"))
+        # The mock performs no writes, so the counters report no change
+        self.assertEqual(summary["qbit"], "unchanged")
+
+    def test_qbit_action_reflects_client_counters(self):
+        stdin = unittest.mock.Mock()
+        stdin.readline.return_value = "pw\n"
+
+        def record_write(*args):
+            args[-1]["created"] += 1
+
+        _, summary = self.run_main(
+            ["--qbit-host", "1.2.3.4", "--qbit-pass-stdin", "--skip-auth"],
+            stdin, client_side_effect=record_write)
         self.assertEqual(summary["qbit"], "configured")
+
+        _, dry_summary = self.run_main(
+            ["--qbit-host", "1.2.3.4", "--qbit-pass-stdin",
+             "--skip-auth", "--dry-run"],
+            stdin, client_side_effect=record_write)
+        self.assertEqual(dry_summary["qbit"], "would_configure")
 
     def test_missing_qbit_credentials_fail_without_the_flag(self):
         with self.assertRaises(SystemExit):
             self.run_main(["--skip-auth"], unittest.mock.Mock())
+
+    def test_missing_pass_stdin_flag_fails_fast(self):
+        with self.assertRaises(SystemExit):
+            self.run_main(["--qbit-host", "1.2.3.4", "--skip-auth"],
+                          unittest.mock.Mock())
 
 
 if __name__ == "__main__":
