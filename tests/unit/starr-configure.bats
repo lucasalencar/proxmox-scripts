@@ -167,6 +167,45 @@ teardown() {
   /usr/bin/grep -q -- "--skip-auth" "$MOCK_LOG"
 }
 
+@test "starr configure forwards --skip-flaresolverr only when requested" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 qbittorrent'
+  export MOCK_PCT_EXEC_HOSTNAME_I="192.168.31.86"
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret 2>&1
+  [ "$status" -eq 0 ]
+  ! /usr/bin/grep -q -- "--skip-flaresolverr" "$MOCK_LOG"
+
+  run bash "$REPO_ROOT/starr/configure.sh" --qbit-pass s3cret --skip-flaresolverr 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q -- "--skip-flaresolverr" "$MOCK_LOG"
+}
+
+@test "starr configure documents the FlareSolverr opt-out" {
+  run bash "$REPO_ROOT/starr/configure.sh" --help 2>&1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--skip-flaresolverr"* ]]
+}
+
+@test "starr configure --skip-qbit runs without a qbit password or container" {
+  # No qbittorrent container in the list: discovery must be skipped, not fail
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+  export MOCK_PCT_EXEC_HOSTNAME_I="192.168.31.86"
+
+  run bash "$REPO_ROOT/starr/configure.sh" --skip-qbit 2>&1
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q -- "--skip-qbit" "$MOCK_LOG"
+  # No credential travels to the guest when the download client is skipped
+  ! /usr/bin/grep -q -- "--qbit-pass-stdin" "$MOCK_LOG"
+  ! /usr/bin/grep -q -- "--qbit-host" "$MOCK_LOG"
+  ! /usr/bin/grep -q "pct exec 106" "$MOCK_LOG"
+}
+
+@test "starr configure documents the qBittorrent opt-out" {
+  run bash "$REPO_ROOT/starr/configure.sh" --help 2>&1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--skip-qbit"* ]]
+}
+
 @test "starr configure generates missing auth passwords and logs them for the password manager" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 qbittorrent'
   export MOCK_PCT_EXEC_HOSTNAME_I="192.168.31.86"

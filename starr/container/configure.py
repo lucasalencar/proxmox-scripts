@@ -55,6 +55,21 @@ LOCALHOST_IP = "127.0.0.1"
 SONARR_PORT = urllib.parse.urlparse(SONARR_BASE).port or 8989
 RADARR_PORT = urllib.parse.urlparse(RADARR_BASE).port or 7878
 
+PROWLARR_TAG_PATH = "/api/v1/tag"
+PROWLARR_INDEXER_PROXY_PATH = "/api/v1/indexerproxy"
+# Provider writes are force-saved because Prowlarr's built-in Test calls its own cloud
+# endpoint; also IndexerProxyDefinition.Enable derives from Tags, so a tagless proxy
+# would otherwise be created disabled. Health is verified directly instead.
+PROWLARR_FORCE_SAVE = "?forceSave=true"
+
+FLARESOLVERR_HOST = "http://127.0.0.1:8191"
+FLARESOLVERR_HEALTH_URL = FLARESOLVERR_HOST + "/health"
+FLARESOLVERR_REQUEST_TIMEOUT = 60
+FLARESOLVERR_TAG_LABEL = "flaresolverr"
+FLARESOLVERR_IMPLEMENTATION = "FlareSolverr"
+# Dry-run stand-in for a tag that does not exist yet
+PLANNED_TAG_ID = -1
+
 DATA_ROOT = "/var/lib"
 BAZARR_CONFIG = "/var/lib/bazarr/config/config.yaml"
 
@@ -391,6 +406,102 @@ def ensure_prowlarr_app(kind: str, prowlarr_key: str, target_key: str,
     )
     counters[action] += 1
     log("Prowlarr application %s: %s" % (name, action))
+
+
+# --- FlareSolverr (Cloudflare solver Prowlarr proxies indexers through) ---
+
+def probe_flaresolverr(timeout: int = 5) -> bool:
+    req = urllib.request.Request(FLARESOLVERR_HEALTH_URL, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, TimeoutError, ValueError):
+        return False
+
+
+def build_flaresolverr_proxy(tag_ids: List[int]) -> Dict[str, Any]:
+    fields = {"host": FLARESOLVERR_HOST,
+              "requestTimeout": FLARESOLVERR_REQUEST_TIMEOUT}
+    return {
+        "name": FLARESOLVERR_IMPLEMENTATION,
+        "implementation": FLARESOLVERR_IMPLEMENTATION,
+        "implementationName": FLARESOLVERR_IMPLEMENTATION,
+        "configContract": "FlareSolverrSettings",
+        "fields": fields_list(fields),
+        "tags": list(tag_ids),
+    }
+
+
+def match_flaresolverr_proxy(item: Dict[str, Any]) -> bool:
+    return item.get("implementation") == FLARESOLVERR_IMPLEMENTATION
+
+
+def find_tag_id(tags: List[Dict[str, Any]], label: str) -> Optional[int]:
+    for tag in tags:
+        if str(tag.get("label", "")).lower() == label.lower():
+            return tag.get("id")
+    return None
+
+
+def ensure_flaresolverr_tag(api_key: str,
+                            dry_run: bool) -> Tuple[Optional[int], str]:
+    tag_id = find_tag_id(servarr_request("GET", PROWLARR_BASE, api_key,
+                                         PROWLARR_TAG_PATH) or [],
+                         FLARESOLVERR_TAG_LABEL)
+    if tag_id is not None:
+        return tag_id, "unchanged"
+    if dry_run:
+        return None, "created"
+    servarr_request("POST", PROWLARR_BASE, api_key, PROWLARR_TAG_PATH,
+                    {"label": FLARESOLVERR_TAG_LABEL})
+    tag_id = find_tag_id(servarr_request("GET", PROWLARR_BASE, api_key,
+                                         PROWLARR_TAG_PATH) or [],
+                         FLARESOLVERR_TAG_LABEL)
+    if tag_id is None:
+        fail("Prowlarr tag '%s' was not created" % FLARESOLVERR_TAG_LABEL)
+    return tag_id, "created"
+
+
+def ensure_flaresolverr_proxy(api_key: str, tag_ids: List[int],
+                              dry_run: bool) -> str:
+    desired = build_flaresolverr_proxy(tag_ids)
+    proxies = servarr_request("GET", PROWLARR_BASE, api_key,
+                              PROWLARR_INDEXER_PROXY_PATH) or []
+    if dry_run:
+        return plan_action(match_flaresolverr_proxy, proxies, desired)
+    action, _ = upsert(
+        match_flaresolverr_proxy, proxies, desired,
+        lambda body: servarr_request("POST", PROWLARR_BASE, api_key,
+                                     PROWLARR_INDEXER_PROXY_PATH + PROWLARR_FORCE_SAVE, body),
+        lambda i, body: servarr_request("PUT", PROWLARR_BASE, api_key,
+                                        "%s/%d%s" % (PROWLARR_INDEXER_PROXY_PATH, i,
+                                                     PROWLARR_FORCE_SAVE), body),
+    )
+    return action
+
+
+def ensure_flaresolverr(api_key: str, dry_run: bool) -> str:
+    if not probe_flaresolverr():
+        log("FlareSolverr is not answering on %s — skipping its Prowlarr setup"
+            % FLARESOLVERR_HEALTH_URL)
+        return "unavailable"
+
+    tag_id, tag_action = ensure_flaresolverr_tag(api_key, dry_run)
+    effective_tag = tag_id if tag_id is not None else PLANNED_TAG_ID
+    proxy_action = ensure_flaresolverr_proxy(api_key, [effective_tag], dry_run)
+
+    if dry_run:
+        log("[dry-run] would %s tag '%s', %s proxy (indexers tagged manually)"
+            % ("create" if tag_action == "created" else "keep",
+               FLARESOLVERR_TAG_LABEL, proxy_action))
+        if tag_action == "unchanged" and proxy_action == "unchanged":
+            return "unchanged"
+        return "would_configure"
+    log("Prowlarr FlareSolverr: tag %s, proxy %s (indexers tagged manually)"
+        % (tag_action, proxy_action))
+    if tag_action == "unchanged" and proxy_action == "unchanged":
+        return "unchanged"
+    return "configured"
 
 
 def build_qbit_login_request(host: str, port: int, username: str,
@@ -803,7 +914,9 @@ def ensure_bazarr(sonarr_key: str, radarr_key: str,
 def build_summary(versions: Dict[str, str], apps: Dict[str, int],
                   clients: Dict[str, int], folders: Dict[str, int],
                   bazarr_action: str, dry_run: bool,
-                  auth: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                  auth: Optional[Dict[str, str]] = None,
+                  flaresolverr_action: str = "skipped",
+                  qbit_action: str = "skipped") -> Dict[str, Any]:
     return {
         "dry_run": dry_run,
         "versions": versions,
@@ -812,6 +925,8 @@ def build_summary(versions: Dict[str, str], apps: Dict[str, int],
         "root_folders": folders,
         "bazarr": bazarr_action,
         "auth": auth or {},
+        "flaresolverr": flaresolverr_action,
+        "qbit": qbit_action,
     }
 
 
@@ -846,25 +961,29 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--auth-method", default="forms",
                         choices=["forms", "basic"])
     parser.add_argument("--skip-bazarr", action="store_true")
+    parser.add_argument("--skip-flaresolverr", action="store_true")
+    parser.add_argument("--skip-qbit", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
-    if not args.qbit_host:
-        fail("--qbit-host is required")
-    if not args.qbit_pass_stdin:
-        fail("--qbit-pass-stdin is required")
-    args.qbit_pass = sys.stdin.readline().rstrip("\r\n")
-    if not args.qbit_pass:
-        fail("qBittorrent password was not provided on stdin")
+    args.qbit_pass = ""
+    if not args.skip_qbit:
+        if not args.qbit_host:
+            fail("--qbit-host is required unless --skip-qbit is passed")
+        if not args.qbit_pass_stdin:
+            fail("--qbit-pass-stdin is required unless --skip-qbit is passed")
+        args.qbit_pass = sys.stdin.readline().rstrip("\r\n")
+        if not args.qbit_pass:
+            fail("qBittorrent password was not provided on stdin")
 
     prowlarr_key = read_api_key(args.data_root, "prowlarr")
     sonarr_key = read_api_key(args.data_root, "sonarr")
     radarr_key = read_api_key(args.data_root, "radarr")
 
-    if not args.dry_run:
+    if not args.skip_qbit and not args.dry_run:
         check_qbit_login(args.qbit_host, args.qbit_port, args.qbit_user, args.qbit_pass)
 
     versions = {}
@@ -878,12 +997,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     ensure_root_folder(SONARR_BASE, sonarr_key, SONARR_ROOT, args.dry_run, folders)
     ensure_root_folder(RADARR_BASE, radarr_key, RADARR_ROOT, args.dry_run, folders)
-    ensure_download_client("sonarr", SONARR_BASE, sonarr_key, args.qbit_host,
-                           args.qbit_port, args.qbit_user, args.qbit_pass,
-                           args.dry_run, clients)
-    ensure_download_client("radarr", RADARR_BASE, radarr_key, args.qbit_host,
-                           args.qbit_port, args.qbit_user, args.qbit_pass,
-                           args.dry_run, clients)
+    qbit_action = "skipped"
+    if not args.skip_qbit:
+        ensure_download_client("sonarr", SONARR_BASE, sonarr_key, args.qbit_host,
+                               args.qbit_port, args.qbit_user, args.qbit_pass,
+                               args.dry_run, clients)
+        ensure_download_client("radarr", RADARR_BASE, radarr_key, args.qbit_host,
+                               args.qbit_port, args.qbit_user, args.qbit_pass,
+                               args.dry_run, clients)
+        if not clients["created"] and not clients["updated"]:
+            qbit_action = "unchanged"
+        elif args.dry_run:
+            qbit_action = "would_configure"
+        else:
+            qbit_action = "configured"
     ensure_prowlarr_app("sonarr", prowlarr_key, sonarr_key, args.dry_run, apps)
     ensure_prowlarr_app("radarr", prowlarr_key, radarr_key, args.dry_run, apps)
 
@@ -891,6 +1018,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     bazarr_action = "skipped"
     if not args.skip_bazarr:
         bazarr_action = ensure_bazarr(sonarr_key, radarr_key, args.dry_run, bazarr_config)
+
+    flaresolverr_action = "skipped"
+    if not args.skip_flaresolverr:
+        flaresolverr_action = ensure_flaresolverr(prowlarr_key, args.dry_run)
 
     auth: Dict[str, str] = {}
     if args.skip_auth:
@@ -922,7 +1053,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             bazarr_api_key, creds["bazarr_user"], creds["bazarr_pass"],
             bazarr_type, args.dry_run)
 
-    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth)))
+    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth, flaresolverr_action, qbit_action)))
     return 0
 
 

@@ -20,6 +20,8 @@ BAZARR_PASS="${STARR_BAZARR_PASS:-}"
 AUTH_METHOD="forms"
 SKIP_AUTH=0
 SKIP_BAZARR=0
+SKIP_FLARESOLVERR=0
+SKIP_QBIT=0
 DRY_RUN=0
 
 usage() {
@@ -40,7 +42,9 @@ usage() {
     echo "  --bazarr-pass <p>    Bazarr login password (or STARR_BAZARR_PASS env, generated when absent)" >&2
     echo "  --auth-method <m>    Servarr auth method: forms|basic (default: $AUTH_METHOD)" >&2
     echo "  --skip-auth          Skip per-app login configuration" >&2
+    echo "  --skip-qbit          Skip qBittorrent download client + login check (no --qbit-pass needed)" >&2
     echo "  --skip-bazarr        Skip Bazarr Sonarr/Radarr linking" >&2
+    echo "  --skip-flaresolverr  Skip Prowlarr FlareSolverr proxy" >&2
     echo "  --dry-run            Show planned actions without changing anything (services must still be up; password is not validated in this mode)" >&2
     echo "" >&2
     echo "Notes:" >&2
@@ -78,15 +82,17 @@ while [ $# -gt 0 ]; do
         --bazarr-pass) need_value "$1" "${2:-}"; BAZARR_PASS="$2"; shift 2 ;;
         --auth-method) need_value "$1" "${2:-}"; AUTH_METHOD="$2"; shift 2 ;;
         --skip-auth) SKIP_AUTH=1; shift ;;
+        --skip-qbit) SKIP_QBIT=1; shift ;;
         --skip-bazarr) SKIP_BAZARR=1; shift ;;
+        --skip-flaresolverr) SKIP_FLARESOLVERR=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
 
-if [ -z "$QBIT_PASS" ]; then
-    log_error "Missing qBittorrent password. Pass --qbit-pass or set QBIT_PASS (see qbittorrent install log)."
+if [ "$SKIP_QBIT" -eq 0 ] && [ -z "$QBIT_PASS" ]; then
+    log_error "Missing qBittorrent password. Pass --qbit-pass or set QBIT_PASS (see qbittorrent install log), or pass --skip-qbit."
     usage
     exit 1
 fi
@@ -141,10 +147,10 @@ if [ -z "$starr_id" ]; then
     exit 1
 fi
 
-if [ -z "$QBIT_HOST" ]; then
+if [ "$SKIP_QBIT" -eq 0 ] && [ -z "$QBIT_HOST" ]; then
     qbit_id=$(get_exact_container_id_by_name "qbittorrent")
     if [ -z "$qbit_id" ]; then
-        log_error "Could not find container 'qbittorrent'. Run qbittorrent/install.sh first, or pass --qbit-host."
+        log_error "Could not find container 'qbittorrent'. Run qbittorrent/install.sh first, pass --qbit-host, or pass --skip-qbit."
         exit 1
     fi
     QBIT_HOST=$(get_container_ip "$qbit_id")
@@ -154,7 +160,7 @@ if [ -z "$QBIT_HOST" ]; then
     fi
 fi
 
-log_step "Configuring Starr integrations (container $starr_id, qBittorrent at $QBIT_HOST:$QBIT_PORT)..."
+log_step "Configuring Starr integrations (container $starr_id${QBIT_HOST:+, qBittorrent at $QBIT_HOST:$QBIT_PORT})..."
 wait_container_ready "$starr_id" || exit 1
 
 REMOTE="/root/starr-configure-$$.py"
@@ -164,9 +170,14 @@ if ! pct push "$starr_id" "$SCRIPT_DIR/container/configure.py" "$REMOTE"; then
 fi
 
 extra_args=()
+if [ "$SKIP_QBIT" -eq 0 ]; then
+    extra_args+=(--qbit-host "$QBIT_HOST" --qbit-user "$QBIT_USER" --qbit-port "$QBIT_PORT" --qbit-pass-stdin)
+fi
+[ "$SKIP_QBIT" -eq 1 ] && extra_args+=(--skip-qbit)
 [ "$SKIP_AUTH" -eq 1 ] && extra_args+=(--skip-auth)
 [ "$SKIP_AUTH" -eq 0 ] && extra_args+=(--auth-method "$AUTH_METHOD")
 [ "$SKIP_BAZARR" -eq 1 ] && extra_args+=(--skip-bazarr)
+[ "$SKIP_FLARESOLVERR" -eq 1 ] && extra_args+=(--skip-flaresolverr)
 [ "$DRY_RUN" -eq 1 ] && extra_args+=(--dry-run)
 
 AUTH_REMOTE="/root/starr-auth-$$.env"
@@ -201,10 +212,13 @@ if [ "$SKIP_AUTH" -eq 0 ]; then
     extra_args+=(--auth-file "$AUTH_REMOTE")
 fi
 
-printf '%s\n' "$QBIT_PASS" | pct exec "$starr_id" -- python3 "$REMOTE" \
-    --qbit-host "$QBIT_HOST" --qbit-user "$QBIT_USER" \
-    --qbit-pass-stdin --qbit-port "$QBIT_PORT" "${extra_args[@]}"
-pct_status=${PIPESTATUS[1]}
+if [ "$SKIP_QBIT" -eq 1 ]; then
+    pct exec "$starr_id" -- python3 "$REMOTE" "${extra_args[@]}"
+    pct_status=$?
+else
+    printf '%s\n' "$QBIT_PASS" | pct exec "$starr_id" -- python3 "$REMOTE" "${extra_args[@]}"
+    pct_status=${PIPESTATUS[1]}
+fi
 # Remove remote secrets regardless of outcome
 [ "$SKIP_AUTH" -eq 0 ] && pct exec "$starr_id" -- rm -f "$AUTH_REMOTE" "$REMOTE" >/dev/null 2>&1 || true
 if [ "$pct_status" -ne 0 ]; then
@@ -221,4 +235,5 @@ if [ "$SKIP_AUTH" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
     log_success "  Bazarr:   user='$BAZARR_USER' pass='$BAZARR_PASS'"
 fi
 log_info "Verify: Prowlarr Settings -> Apps, Sonarr/Radarr Settings -> Download Clients -> Test,"
+log_info "  Prowlarr Settings -> Indexers -> Indexer Proxies -> FlareSolverr -> Test,"
 log_info "  Bazarr Settings -> Sonarr/Radarr -> Test connection."
