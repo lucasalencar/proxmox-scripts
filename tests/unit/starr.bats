@@ -243,4 +243,7 @@ teardown() {
   /usr/bin/grep -qi "indexer prox" "$REPO_ROOT/starr/README.md"
   /usr/bin/grep -qi "matching tags" "$REPO_ROOT/starr/README.md"
   /usr/bin/grep -q "127.0.0.1:8191/health" "$REPO_ROOT/starr/README.md"
+  # Indexer scope is manual: re-runs must not re-tag indexers
+  /usr/bin/grep -qi "scope is manual" "$REPO_ROOT/starr/README.md"
+  /usr/bin/grep -qi "never touch indexer tags" "$REPO_ROOT/starr/README.md"
 }

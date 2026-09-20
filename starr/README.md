@@ -128,7 +128,7 @@ Follow the install log plus:
 
 Indexers like 1337x sit behind Cloudflare and fail Prowlarr's Test until FlareSolverr handles the challenge. `starr/container/provision.sh` installs it and `starr/configure.sh` wires it into Prowlarr on every run: it creates the `flaresolverr` tag and points the FlareSolverr indexer proxy at `http://127.0.0.1:8191`. Pass `--skip-flaresolverr` to leave Prowlarr untouched.
 
-Tags are what enable the proxy: Prowlarr keeps it disabled unless the proxy carries a tag, so the proxy always gets one. Prowlarr only routes a request through FlareSolverr when it detects a Cloudflare challenge, so tagged indexers behave normally otherwise. Scope is manual: in Prowlarr Settings -> Indexers, add the `flaresolverr` tag only to the indexers that need it. Re-runs never touch indexer tags. The proxy's own tags are fully managed: extras added in the UI are removed on the next run.
+Tags are what enable the proxy: Prowlarr keeps it disabled unless the proxy carries matching tags, so the proxy always gets one. Prowlarr only routes a request through FlareSolverr when it detects a Cloudflare challenge, so tagged indexers behave normally otherwise. Scope is manual: in Prowlarr Settings -> Indexers, add the `flaresolverr` tag only to the indexers that need it. Re-runs never touch indexer tags. The proxy's own tags are fully managed: extras added in the UI are removed on the next run.
 
 FlareSolverr is third-party software and upstream reports Cloudflare actively targets it; if it stops solving challenges, try another base URL for the affected indexer instead.
 
