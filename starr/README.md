@@ -61,7 +61,7 @@ bash starr/configure.sh --skip-qbit --skip-auth
 | Bazarr | 6767 | `bazarr.marx.home` |
 | FlareSolverr | 8191 | none — loopback only (`127.0.0.1`) |
 
-Single CT = single IP, 4 public ports. `caddy/generate-caddyfile.sh:138` only auto-detects one port per CT (`ss -tlnp | head -1`), so you must add 4 entries manually after generation.
+Single CT = single IP, 4 public ports. `caddy/generate-caddyfile.sh` detects all listening ports and prompts for one subdomain per port — answer yes to multi-service for `starr`.
 
 FlareSolverr is deliberately bound to `127.0.0.1`: only Prowlarr (same CT) talks to it, so it must **not** get a Caddy entry and is never exposed on the LAN.
 
