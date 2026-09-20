@@ -44,7 +44,7 @@ usage() {
     echo "  --skip-auth          Skip per-app login configuration" >&2
     echo "  --skip-qbit          Skip qBittorrent download client + login check (no --qbit-pass needed)" >&2
     echo "  --skip-bazarr        Skip Bazarr Sonarr/Radarr linking" >&2
-    echo "  --skip-flaresolverr  Skip Prowlarr FlareSolverr proxy + indexer tagging" >&2
+    echo "  --skip-flaresolverr  Skip Prowlarr FlareSolverr proxy" >&2
     echo "  --dry-run            Show planned actions without changing anything (services must still be up; password is not validated in this mode)" >&2
     echo "" >&2
     echo "Notes:" >&2

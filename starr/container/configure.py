@@ -56,8 +56,6 @@ SONARR_PORT = urllib.parse.urlparse(SONARR_BASE).port or 8989
 RADARR_PORT = urllib.parse.urlparse(RADARR_BASE).port or 7878
 
 PROWLARR_TAG_PATH = "/api/v1/tag"
-PROWLARR_INDEXER_PATH = "/api/v1/indexer"
-PROWLARR_INDEXER_BULK_PATH = "/api/v1/indexer/bulk"
 PROWLARR_INDEXER_PROXY_PATH = "/api/v1/indexerproxy"
 # Provider writes are force-saved because Prowlarr's built-in Test calls its own cloud
 # endpoint; also IndexerProxyDefinition.Enable derives from Tags, so a tagless proxy
@@ -69,7 +67,7 @@ FLARESOLVERR_HEALTH_URL = FLARESOLVERR_HOST + "/health"
 FLARESOLVERR_REQUEST_TIMEOUT = 60
 FLARESOLVERR_TAG_LABEL = "flaresolverr"
 FLARESOLVERR_IMPLEMENTATION = "FlareSolverr"
-# Dry-run stand-in for a tag that does not exist yet, so no indexer appears to have it
+# Dry-run stand-in for a tag that does not exist yet
 PLANNED_TAG_ID = -1
 
 DATA_ROOT = "/var/lib"
@@ -482,22 +480,6 @@ def ensure_flaresolverr_proxy(api_key: str, tag_ids: List[int],
     return action
 
 
-def ensure_flaresolverr_indexer_tags(api_key: str, tag_id: int,
-                                     dry_run: bool) -> Tuple[str, int]:
-    indexers = servarr_request("GET", PROWLARR_BASE, api_key,
-                               PROWLARR_INDEXER_PATH) or []
-    pending = [indexer["id"] for indexer in indexers
-               if indexer.get("enable")
-               and tag_id not in (indexer.get("tags") or [])]
-    if not pending:
-        return "unchanged", 0
-    if dry_run:
-        return "updated", len(pending)
-    servarr_request("PUT", PROWLARR_BASE, api_key, PROWLARR_INDEXER_BULK_PATH,
-                    {"ids": pending, "tags": [tag_id], "applyTags": "add"})
-    return "updated", len(pending)
-
-
 def ensure_flaresolverr(api_key: str, dry_run: bool) -> str:
     if not probe_flaresolverr():
         log("FlareSolverr is not answering on %s — skipping its Prowlarr setup"
@@ -507,19 +489,17 @@ def ensure_flaresolverr(api_key: str, dry_run: bool) -> str:
     tag_id, tag_action = ensure_flaresolverr_tag(api_key, dry_run)
     effective_tag = tag_id if tag_id is not None else PLANNED_TAG_ID
     proxy_action = ensure_flaresolverr_proxy(api_key, [effective_tag], dry_run)
-    indexer_action, indexer_count = ensure_flaresolverr_indexer_tags(
-        api_key, effective_tag, dry_run)
 
     if dry_run:
-        log("[dry-run] would %s tag '%s', %s proxy, tag %d enabled indexer(s)"
+        log("[dry-run] would %s tag '%s', %s proxy (indexers tagged manually)"
             % ("create" if tag_action == "created" else "keep",
-               FLARESOLVERR_TAG_LABEL, proxy_action, indexer_count))
-        if proxy_action == "unchanged" and indexer_action == "unchanged":
+               FLARESOLVERR_TAG_LABEL, proxy_action))
+        if tag_action == "unchanged" and proxy_action == "unchanged":
             return "unchanged"
         return "would_configure"
-    log("Prowlarr FlareSolverr: tag %s, proxy %s, %d indexer(s) %s"
-        % (tag_action, proxy_action, indexer_count, indexer_action))
-    if proxy_action == "unchanged" and indexer_action == "unchanged":
+    log("Prowlarr FlareSolverr: tag %s, proxy %s (indexers tagged manually)"
+        % (tag_action, proxy_action))
+    if tag_action == "unchanged" and proxy_action == "unchanged":
         return "unchanged"
     return "configured"
 

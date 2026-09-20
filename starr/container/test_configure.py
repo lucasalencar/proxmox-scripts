@@ -1029,16 +1029,16 @@ class SummaryShapeTests(unittest.TestCase):
 
 
 class FakeProwlarrTransport:
-    """Path-routed Prowlarr fake: serves tags/proxies/indexers, records writes.
+    """Path-routed Prowlarr fake: serves tags/proxies, records writes.
 
     POSTs to the tag endpoint mutate the served tag list so the read-back after
-    creation behaves like the real API.
+    creation behaves like the real API. Indexer endpoints are intentionally
+    absent: ensure_flaresolverr must never touch indexers (manual tagging).
     """
 
-    def __init__(self, tags=None, proxies=None, indexers=None):
+    def __init__(self, tags=None, proxies=None):
         self.tags = [dict(t) for t in (tags or [])]
         self.proxies = [dict(p) for p in (proxies or [])]
-        self.indexers = [dict(i) for i in (indexers or [])]
         self.calls = []
 
     def __call__(self, method, base, api_key, path, body=None):
@@ -1049,8 +1049,6 @@ class FakeProwlarrTransport:
                 return copy.deepcopy(self.tags)
             if route == configure.PROWLARR_INDEXER_PROXY_PATH:
                 return copy.deepcopy(self.proxies)
-            if route == configure.PROWLARR_INDEXER_PATH:
-                return copy.deepcopy(self.indexers)
             return []
         if route == configure.PROWLARR_TAG_PATH:
             next_id = max([t.get("id", 0) for t in self.tags] + [0]) + 1
@@ -1104,12 +1102,8 @@ class FlareSolverrTests(unittest.TestCase):
                          configure.FLARESOLVERR_REQUEST_TIMEOUT)
         self.assertEqual(set(fields), {"host", "requestTimeout"})
 
-    def test_creates_tag_proxy_and_tags_enabled_indexers(self):
-        transport = FakeProwlarrTransport(
-            proxies=[],
-            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": []},
-                      {"id": 2, "name": "YTS", "enable": True, "tags": [3]},
-                      {"id": 3, "name": "Disabled", "enable": False, "tags": []}])
+    def test_creates_tag_and_proxy_without_touching_indexers(self):
+        transport = FakeProwlarrTransport(proxies=[])
         self.connect(transport)
 
         self.assertEqual(configure.ensure_flaresolverr("KEY", False),
@@ -1118,29 +1112,25 @@ class FlareSolverrTests(unittest.TestCase):
         self.assertEqual(transport.write_paths(), [
             configure.PROWLARR_TAG_PATH,
             configure.PROWLARR_INDEXER_PROXY_PATH + "?forceSave=true",
-            configure.PROWLARR_INDEXER_BULK_PATH,
         ])
         proxy_body = transport.writes()[1][2]
         self.assertEqual(proxy_body["tags"], [1])
-        bulk_body = transport.writes()[2][2]
-        self.assertEqual(bulk_body["ids"], [1, 2])
-        self.assertEqual(bulk_body["tags"], [1])
-        self.assertEqual(bulk_body["applyTags"], "add")
+        for _, path, _ in transport.calls:
+            self.assertNotIn("indexer/bulk", path)
+            self.assertFalse(path.split("?")[0] == "/api/v1/indexer")
 
-    def test_unchanged_when_proxy_and_indexers_already_tagged(self):
+    def test_unchanged_when_tag_and_proxy_converged(self):
         transport = FakeProwlarrTransport(
             tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
-            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)],
-            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": [7]}])
+            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)])
         self.connect(transport)
 
         self.assertEqual(configure.ensure_flaresolverr("KEY", False),
                          "unchanged")
         self.assertEqual(transport.writes(), [])
 
-    def test_dry_run_writes_nothing_and_plans_both_sides(self):
-        transport = FakeProwlarrTransport(
-            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": []}])
+    def test_dry_run_writes_nothing_and_plans_tag_and_proxy(self):
+        transport = FakeProwlarrTransport()
         self.connect(transport)
 
         self.assertEqual(configure.ensure_flaresolverr("KEY", True),
@@ -1150,8 +1140,7 @@ class FlareSolverrTests(unittest.TestCase):
     def test_dry_run_reports_unchanged_when_converged(self):
         transport = FakeProwlarrTransport(
             tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
-            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)],
-            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": [7]}])
+            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)])
         self.connect(transport)
 
         self.assertEqual(configure.ensure_flaresolverr("KEY", True),
@@ -1164,8 +1153,7 @@ class FlareSolverrTests(unittest.TestCase):
                              {"name": "requestTimeout", "value": 60}]
         transport = FakeProwlarrTransport(
             tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
-            proxies=[drifted],
-            indexers=[{"id": 1, "name": "1337x", "enable": True, "tags": [7]}])
+            proxies=[drifted])
         self.connect(transport)
 
         self.assertEqual(configure.ensure_flaresolverr("KEY", False),
@@ -1203,18 +1191,6 @@ class FlareSolverrTests(unittest.TestCase):
         self.assertEqual(configure.find_tag_id(tags, "flaresolverr"), 7)
         self.assertIsNone(configure.find_tag_id(tags, "other"))
         self.assertIsNone(configure.find_tag_id([], "flaresolverr"))
-
-    def test_no_indexers_means_no_bulk_write(self):
-        transport = FakeProwlarrTransport(
-            tags=[{"id": 7, "label": configure.FLARESOLVERR_TAG_LABEL}],
-            proxies=[copy.deepcopy(FLARESOLVERR_PROXY_EXISTING)],
-            indexers=[])
-        self.connect(transport)
-
-        self.assertEqual(
-            configure.ensure_flaresolverr_indexer_tags("KEY", 7, False),
-            ("unchanged", 0))
-        self.assertEqual(transport.writes(), [])
 
     def test_tag_creation_that_does_not_persist_fails(self):
         class StubbornTags(FakeProwlarrTransport):
