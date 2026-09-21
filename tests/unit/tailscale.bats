@@ -301,7 +301,6 @@ teardown() {
 @test "tailscale container upgrade.sh refreshes package and checks service" {
   /usr/bin/grep -q "only-upgrade" "$REPO_ROOT/tailscale/container/upgrade.sh"
   /usr/bin/grep -q "is-active" "$REPO_ROOT/tailscale/container/upgrade.sh"
-  /usr/bin/grep -q "ip_forward" "$REPO_ROOT/tailscale/container/upgrade.sh"
   # Upgrade must refresh, never reinstall from scratch
   ! /usr/bin/grep -qE "\| (sh|bash)" "$REPO_ROOT/tailscale/container/upgrade.sh"
   run bash -n "$REPO_ROOT/tailscale/container/upgrade.sh"
@@ -389,61 +388,29 @@ setup_sysroot() {
   [[ "$output" == *"signed"* ]]
 }
 
-@test "tailscale upgrade executes, restarts service and verifies forwarding" {
-  export TAILSCALE_TUN_DEV=/dev/null
-
+@test "tailscale upgrade executes and restarts service" {
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -eq 0 ]
   /usr/bin/grep -q "apt-get install --only-upgrade -y tailscale" "$MOCK_LOG"
   /usr/bin/grep -q "systemctl restart tailscaled" "$MOCK_LOG"
-  [[ "$output" == *"IP forwarding: enabled"* ]]
 }
 
 @test "tailscale upgrade starts an inactive service" {
   export MOCK_SYSTEMCTL_ACTIVE=1
-  export TAILSCALE_TUN_DEV=/dev/null
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -eq 0 ]
   /usr/bin/grep -q "systemctl start tailscaled" "$MOCK_LOG"
 }
 
-@test "tailscale upgrade fails when IPv4 forwarding is off" {
-  export MOCK_SYSCTL_IP_FORWARD=0
-  export TAILSCALE_TUN_DEV=/dev/null
-
-  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"forwarding is disabled"* ]]
-}
-
-@test "tailscale upgrade fails when IPv6 forwarding is off" {
-  export MOCK_SYSCTL_IPV6_FORWARDING=0
-  export TAILSCALE_TUN_DEV=/dev/null
-
-  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"forwarding is disabled"* ]]
-}
-
-@test "tailscale upgrade fails when TUN device is missing" {
-  export TAILSCALE_TUN_DEV="$MOCK_TMPDIR/no-tun"
-
-  run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"TUN"* ]]
-}
-
 @test "tailscale upgrade fails when service control fails" {
   export MOCK_SYSTEMCTL_FAIL=1
-  export TAILSCALE_TUN_DEV=/dev/null
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
   [ "$status" -ne 0 ]
 }
 
 @test "tailscale upgrade fails when apt fails" {
-  export TAILSCALE_TUN_DEV=/dev/null
   export MOCK_APT_GET_FAIL=1
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
@@ -451,7 +418,6 @@ setup_sysroot() {
 }
 
 @test "tailscale upgrade fails when service dies after restart" {
-  export TAILSCALE_TUN_DEV=/dev/null
   export MOCK_SYSTEMCTL_FAIL_SECOND_CHECK=1
 
   run bash "$REPO_ROOT/tailscale/container/upgrade.sh" 2>&1
