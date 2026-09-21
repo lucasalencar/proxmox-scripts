@@ -185,17 +185,6 @@ create_temp_root() {
   [ "$output" = "105" ]
 }
 
-# -------------------------------------------------------------------
-# get_container_id_by_exact_name
-# -------------------------------------------------------------------
-
-@test "get_container_id_by_exact_name matches exact name only" {
-  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 tailscale-router\n106        running                 tailscale-router-2\n107        running                 my-tailscale-router'
-  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_id_by_exact_name "tailscale-router"'
-  [ "$status" -eq 0 ]
-  [ "$output" = "105" ]
-}
-
 @test "get_exact_container_id_by_name is case-sensitive and rejects partials" {
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr\n106        running                 starr-backup'
   run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "Starr" && echo ok || echo fail'
@@ -216,25 +205,6 @@ create_temp_root() {
 
 @test "get_exact_container_id_by_name fails for empty name" {
   run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_exact_container_id_by_name "" && echo ok || echo fail'
-  [ "$output" = "fail" ]
-}
-
-@test "get_container_id_by_exact_name matches case-insensitively" {
-  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 Tailscale-Router'
-  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_id_by_exact_name "tailscale-router"'
-  [ "$status" -eq 0 ]
-  [ "$output" = "105" ]
-}
-
-@test "get_container_id_by_exact_name returns empty when no exact match" {
-  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router-2'
-  run bash -c 'source "$REPO_ROOT/common/functions.sh"; result=$(get_container_id_by_exact_name "tailscale-router"); [ -z "$result" ] && echo empty || echo "not empty:$result"'
-  [ "$status" -eq 0 ]
-  [ "$output" = "empty" ]
-}
-
-@test "get_container_id_by_exact_name fails for empty name" {
-  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_id_by_exact_name "" && echo ok || echo fail'
   [ "$output" = "fail" ]
 }
 

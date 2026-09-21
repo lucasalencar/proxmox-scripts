@@ -55,7 +55,7 @@ apply_tun_passthrough() {
 log_step "Starting Tailscale subnet router installation (dedicated LXC)..."
 
 # --- 1. Create / find container (exact name match, never a similar guest) ---
-container_id=$(get_container_id_by_exact_name "$CONTAINER_NAME")
+container_id=$(get_exact_container_id_by_name "$CONTAINER_NAME")
 if [ -n "$container_id" ] && ! is_valid_guest_id "$container_id"; then
     log_error "Refusing to operate on unexpected container ID '$container_id'"
     exit 1

@@ -49,7 +49,7 @@ Login is manual and never automated (no auth keys or tokens in scripts):
 ```bash
 source common/functions.sh
 source tailscale/config.sh
-CTID=$(get_container_id_by_exact_name "$CONTAINER_NAME")
+CTID=$(get_exact_container_id_by_name "$CONTAINER_NAME")
 pct exec "$CTID" -- tailscale up
 pct exec "$CTID" -- tailscale set --advertise-routes=<LAN-CIDR>
 ```
@@ -61,7 +61,7 @@ Then approve the route in the Tailscale admin console. Full verification checkli
 ```bash
 source common/functions.sh
 source tailscale/config.sh
-CTID=$(get_container_id_by_exact_name "$CONTAINER_NAME")
+CTID=$(get_exact_container_id_by_name "$CONTAINER_NAME")
 pct config "$CTID" | grep -E "lxc.cgroup2.devices.allow|lxc.mount.entry: /dev/net/tun"
 pct exec "$CTID" -- test -c /dev/net/tun && echo "TUN device present"
 pct exec "$CTID" -- systemctl is-active tailscaled

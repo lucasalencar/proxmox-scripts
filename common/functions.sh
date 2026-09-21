@@ -385,15 +385,6 @@ get_exact_container_id_by_name() {
     printf '%s\n' "$ids"
 }
 
-# Returns the container ID by exact hostname match (case-insensitive).
-# Unlike get_container_id_by_name, similar names never collide.
-# Usage: get_container_id_by_exact_name "tailscale-router"
-get_container_id_by_exact_name() {
-    local name="$1"
-    [ -z "$name" ] && return 1
-    pct list | awk -v n="$name" 'NR>1 && tolower($NF) == tolower(n) {print $1; exit}'
-}
-
 # Tag that excludes a guest from automatic Caddy publishing.
 # Single source for the generator and every package that needs it.
 # shellcheck disable=SC2034 # consumed cross-file by caddy/generate-caddyfile.sh

@@ -16,7 +16,7 @@ log_step "Caddyfile Generator for *.$DOMAIN"
 echo ""
 
 # --- Verify Caddy container exists ---
-CADDY_ID=$(get_container_id_by_exact_name "$CADDY_CONTAINER_NAME")
+CADDY_ID=$(get_exact_container_id_by_name "$CADDY_CONTAINER_NAME")
 if [ -z "$CADDY_ID" ] || ! is_valid_guest_id "$CADDY_ID"; then
     log_error "Caddy container not found. Run install.sh first."
     exit 1

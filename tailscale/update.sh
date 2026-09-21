@@ -8,7 +8,7 @@ require_root
 
 log_step "Checking for Tailscale updates..."
 
-container_id=$(get_container_id_by_exact_name "$CONTAINER_NAME")
+container_id=$(get_exact_container_id_by_name "$CONTAINER_NAME")
 
 if [ -z "$container_id" ]; then
     log_error "Could not find container '$CONTAINER_NAME'. Run install.sh first."
