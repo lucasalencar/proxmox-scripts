@@ -94,6 +94,11 @@ for i in $(seq 0 $((TOTAL - 1))); do
 done
 echo ""
 
+# Prints sorted unique TCP ports from ss -tlnp output on stdin
+parse_ss_ports() {
+    tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq
+}
+
 # Prints listening TCP ports of a guest (one per line, numeric sort)
 detect_ports() {
     local guest_type="$1"
@@ -101,12 +106,12 @@ detect_ports() {
     local output
     if [ "$guest_type" = "ct" ]; then
         if pct status "$guest_id" 2>/dev/null | grep -q "running"; then
-            pct exec "$guest_id" -- ss -tlnp </dev/null 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq
+            pct exec "$guest_id" -- ss -tlnp </dev/null 2>/dev/null | parse_ss_ports
         fi
     else
         if qm status "$guest_id" 2>/dev/null | grep -q "running"; then
             output=$(qm guest exec "$guest_id" -- ss -tlnp </dev/null 2>/dev/null)
-            echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq
+            echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | parse_ss_ports
         fi
     fi
 }
@@ -116,7 +121,7 @@ resolve_real_python3() {
     local found candidate
     found=$(command -v python3 2>/dev/null || true)
     case "$found" in
-        ""|*mocks*) ;;
+        ""|*/mocks) ;;
         *)
             printf '%s\n' "$found"
             return 0
@@ -132,6 +137,10 @@ resolve_real_python3() {
 }
 
 # --- Describe guests (with listening ports) for the Python core ---
+if ! command -v jq >/dev/null 2>&1; then
+    log_error "jq not found. Install jq to describe guests, then re-run."
+    exit 1
+fi
 GUESTS_JSON=$(mktemp)
 TMP_CADDYFILE=$(mktemp)
 trap 'rm -f "$GUESTS_JSON" "$TMP_CADDYFILE"' EXIT
@@ -157,7 +166,7 @@ done
 # --- Resolve entries and render the Caddyfile via the Python core ---
 REAL_PYTHON3=$(resolve_real_python3 || true)
 if [ -z "$REAL_PYTHON3" ]; then
-    log_error "python3 not found. Install Python 3 to run $CORE_SCRIPT."
+    log_error "python3 not found. Install Python 3 (e.g. apt install python3) to run $CORE_SCRIPT."
     exit 1
 fi
 

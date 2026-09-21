@@ -161,9 +161,12 @@ class PromptTlsTests(unittest.TestCase):
         self.assertTrue(any("saved TLS" in line for line in logs))
 
     def test_yes_no_empty_answers(self):
+        seen = {}
         self.assertEqual(
-            core.prompt_tls("j", {}, DOMAIN, Asker(["y"]), lambda line: None), "https"
+            core.prompt_tls("j", seen, DOMAIN, Asker(["y"]), lambda line: None),
+            "https",
         )
+        self.assertEqual(seen, {})
         self.assertEqual(
             core.prompt_tls("j", {}, DOMAIN, Asker(["n"]), lambda line: None), "http"
         )
@@ -342,6 +345,47 @@ class ResolveTests(unittest.TestCase):
             entries, [core.Entry("jellyfin", "10.0.0.7", 80, "http")]
         )
         self.assertIn("reverse_proxy 10.0.0.7:80", text)
+
+    def test_ip_swap_new_occupant_not_swallowed(self):
+        asker, logs, entries, text, _ = resolve(
+            [
+                make_guest("x", "10.0.0.6", [8080], gid="201"),
+                make_guest("y", "10.0.0.5", [9090], gid="202"),
+            ],
+            "http://x.marx.home {\n"
+            "    reverse_proxy 10.0.0.5:8080\n"
+            "}\n",
+            ["", "n"],
+        )
+        self.assertEqual(
+            [(entry.name, entry.ip, entry.port) for entry in entries],
+            [("x", "10.0.0.6", 8080), ("y", "10.0.0.5", 9090)],
+        )
+        self.assertIn("reverse_proxy 10.0.0.6:8080", text)
+        self.assertIn("reverse_proxy 10.0.0.5:9090", text)
+
+    def test_duplicate_subdomain_in_multi_service_no_extra_block(self):
+        asker, logs, entries, text, _ = resolve(
+            [
+                make_guest("g1", "10.0.0.5", [8080], gid="201"),
+                make_guest("g2", "10.0.0.6", [9090, 9091], gid="202"),
+            ],
+            "",
+            ["", "n", "y", "g1", "svc", "n"],
+        )
+        self.assertEqual([entry.name for entry in entries], ["g1", "svc"])
+        self.assertNotIn("g2.marx.home", text)
+        self.assertFalse(any("falling back" in line for line in logs))
+
+    def test_out_of_range_ports_fall_back_to_suggested(self):
+        for bad in ("0", "99999"):
+            _, logs, entries, _, _ = resolve(
+                [make_guest("jellyfin", "10.0.0.7", [8096], gid="107")],
+                "",
+                [bad, "n"],
+            )
+            self.assertEqual(entries[0].port, 8096)
+            self.assertTrue(any("Invalid port" in line for line in logs))
 
 
 class RenderTests(unittest.TestCase):
