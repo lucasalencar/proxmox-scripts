@@ -209,6 +209,109 @@ create_temp_root() {
 }
 
 # -------------------------------------------------------------------
+# guest_has_tag
+# -------------------------------------------------------------------
+
+@test "guest_has_tag matches comma-separated token" {
+  export MOCK_PCT_CONFIG=$'hostname: router\ntags: tailscale,router,no-auto-proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "yes" ]
+}
+
+@test "guest_has_tag matches semicolon and space separators case-insensitively" {
+  export MOCK_PCT_CONFIG=$'hostname: router\nTags: vpn;No-Auto-Proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "yes" ]
+}
+
+@test "guest_has_tag rejects substring matches" {
+  export MOCK_PCT_CONFIG=$'hostname: router\ntags: my-no-auto-proxy,no-auto-proxy-foo'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag rejects regex metacharacters in wanted tag" {
+  export MOCK_PCT_CONFIG=$'hostname: router\ntags: fooXbar'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 "foo.bar" && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag fails when tags absent" {
+  export MOCK_PCT_CONFIG="hostname: router"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag ct 106 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag fails for unknown guest kind" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vmx 106 no-auto-proxy; echo "exit:$?"'
+  [[ "$output" == *"exit:2"* ]]
+}
+
+@test "guest_has_tag matches VM tags from qm config" {
+  export MOCK_QM_CONFIG_201=$'hostname: vmrouter\nTags: vpn;No-Auto-Proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vm 201 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "yes" ]
+}
+
+@test "guest_has_tag rejects substring matches on VMs" {
+  export MOCK_QM_CONFIG_201=$'hostname: vmrouter\ntags: my-no-auto-proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vm 201 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+@test "guest_has_tag fails for VMs without tags" {
+  export MOCK_QM_CONFIG_201="hostname: vmrouter"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; guest_has_tag vm 201 no-auto-proxy && echo yes || echo no'
+  [ "$output" = "no" ]
+}
+
+# -------------------------------------------------------------------
+# is_valid_guest_id
+# -------------------------------------------------------------------
+
+@test "is_valid_guest_id accepts numeric IDs" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id 106 && echo ok || echo fail'
+  [ "$output" = "ok" ]
+}
+
+@test "is_valid_guest_id rejects paths and empty input" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id "../../etc/cron.d/x" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id "" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_guest_id "106;" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+# -------------------------------------------------------------------
+# ensure_guest_tags
+# -------------------------------------------------------------------
+
+@test "ensure_guest_tags appends missing tags preserving existing" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: foo; tailscale'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; ensure_guest_tags ct 106 "tailscale,router,no-auto-proxy"'
+  [ "$status" -eq 0 ]
+  /usr/bin/grep -q "pct set 106 --tags foo,tailscale,router,no-auto-proxy" "$MOCK_LOG"
+}
+
+@test "ensure_guest_tags does nothing when complete" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG=$'hostname: tailscale-router\ntags: tailscale,router,no-auto-proxy'
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; ensure_guest_tags ct 106 "tailscale,router,no-auto-proxy"'
+  [ "$status" -eq 0 ]
+  ! /usr/bin/grep -q "pct set 106" "$MOCK_LOG"
+}
+
+@test "ensure_guest_tags fails when set fails" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n106        running                 tailscale-router'
+  export MOCK_PCT_CONFIG="hostname: tailscale-router"
+  export MOCK_PCT_SET_FAIL=1
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; ensure_guest_tags ct 106 "tailscale" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+# -------------------------------------------------------------------
 # get_vm_id_by_name
 # -------------------------------------------------------------------
 
@@ -259,8 +362,7 @@ create_temp_root() {
   [ "$output" = "10.0.0.5" ]
 }
 
-@test "get_container_ip falls back to pct config when exec returns empty" {
-  export MOCK_PCT_EXEC_HOSTNAME_I=""
+@test "get_container_ip falls back to pct config when exec returns empty" {  export MOCK_PCT_EXEC_HOSTNAME_I=""
   export MOCK_PCT_EXEC_OUTPUT=""
   export MOCK_PCT_EXEC_FAIL=1
   # For wait_container_ready we need pct exec true to succeed, so override
@@ -275,6 +377,57 @@ net0: name=eth0,bridge=vmbr0,ip=10.0.0.99/24,ip=10.0.0.99"
   run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_ip 101'
   # may return empty or 10.0.0.99 depending on mock config, just check it does not error
   [ "$status" -eq 0 ]
+}
+
+@test "get_container_ip prefers IPv4 when hostname lists IPv6 first" {
+  export MOCK_PCT_EXEC_HOSTNAME_I="fe80::1 10.0.0.6"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_ip 101'
+  [ "$status" -eq 0 ]
+  [ "$output" = "10.0.0.6" ]
+}
+
+@test "get_container_ip returns empty for DHCP placeholders" {
+  export MOCK_PCT_EXEC_HOSTNAME_I=" "
+  export MOCK_PCT_EXEC_OUTPUT=" "
+  export MOCK_PCT_CONFIG="hostname: test
+net0: name=eth0,bridge=vmbr0,ip=dhcp,ip6=dhcp"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_container_ip 101'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "get_vm_ip returns empty for DHCP placeholders" {
+  export MOCK_QM_GUEST_HOSTNAME_I=""
+  export MOCK_QM_GUEST_EXEC_OUTPUT='{"out-data": "", "exitcode": 0}'
+  export MOCK_QM_CONFIG="ipconfig0: ip=dhcp"
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; get_vm_ip 200'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "is_valid_ipv4 accepts dotted decimals and rejects garbage" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 10.0.0.6 && echo ok || echo fail'
+  [ "$output" = "ok" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 "fe80::1" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 "10.0.0.5 evil" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_valid_ipv4 "" && echo ok || echo fail'
+  [ "$output" = "fail" ]
+}
+
+@test "prefer_ipv4 picks the first IPv4 token" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; prefer_ipv4 "fe80::1 10.0.0.6"'
+  [ "$output" = "10.0.0.6" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; result=$(prefer_ipv4 "fe80::1"); [ -z "$result" ] && echo empty'
+  [ "$output" = "empty" ]
+}
+
+@test "is_placeholder_ip detects dhcp auto manual" {
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_placeholder_ip dhcp && echo yes || echo no'
+  [ "$output" = "yes" ]
+  run bash -c 'source "$REPO_ROOT/common/functions.sh"; is_placeholder_ip 10.0.0.5 && echo yes || echo no'
+  [ "$output" = "no" ]
 }
 
 # -------------------------------------------------------------------

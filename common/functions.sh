@@ -212,14 +212,38 @@ get_vm_id_by_name() {
     '
 }
 
+# Prints the first IPv4 token in whitespace-separated input, or nothing.
+# hostname -I may list IPv6 first, and Caddy backends require IPv4 here.
+# Usage: ip=$(prefer_ipv4 "$hostname_I_output")
+prefer_ipv4() {
+    echo "${1:-}" | tr ' ' '\n' | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' | head -1
+}
+
+# Reports whether an address is a placeholder rather than a real IP
+# (DHCP/auto configuration markers from pct/qm config).
+# Usage: is_placeholder_ip "$ip" && ip=""
+is_placeholder_ip() {
+    case "${1:-}" in
+        dhcp|auto|manual) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Returns the primary IP of a VM via guest agent (fallback ipconfig from config)
 # Usage: vm_ip=$(get_vm_ip <vmid>)
 get_vm_ip() {
     local vmid="$1"
-    local ip
-    ip=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | jq -r '.["out-data"] // .["out"] // empty' | awk '{print $1}')
+    local ip raw
+    raw=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null | jq -r '.["out-data"] // .["out"] // empty')
+    ip=$(prefer_ipv4 "$raw")
     if [ -z "$ip" ]; then
-        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^/]+' | head -1)
+        ip=$(echo "$raw" | awk '{print $1}')
+    fi
+    if [ -z "$ip" ]; then
+        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^,\s/]+' | head -1)
+        if is_placeholder_ip "$ip"; then
+            ip=""
+        fi
     fi
     echo "$ip"
 }
@@ -229,13 +253,20 @@ get_vm_ip() {
 # Usage: container_ip=$(get_container_ip <container_id>)
 get_container_ip() {
     local container_id="$1"
-    local ip
+    local ip raw
 
     wait_container_ready "$container_id" || return 1
 
-    ip=$(pct exec "$container_id" -- hostname -I 2>/dev/null | awk '{print $1}')
+    raw=$(pct exec "$container_id" -- hostname -I 2>/dev/null || true)
+    ip=$(prefer_ipv4 "$raw")
     if [ -z "$ip" ]; then
-        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^\s/]+' | grep -v '^dhcp$')
+        ip=$(echo "$raw" | awk '{print $1}')
+    fi
+    if [ -z "$ip" ]; then
+        ip=$(pct config "$container_id" | grep -oP 'ip=\K[^,\s/]+' | head -1)
+        if is_placeholder_ip "$ip"; then
+            ip=""
+        fi
     fi
 
     echo "$ip"
@@ -352,6 +383,117 @@ get_exact_container_id_by_name() {
         return 1
     fi
     printf '%s\n' "$ids"
+}
+
+# Tag that excludes a guest from automatic Caddy publishing.
+# Single source for the generator and every package that needs it.
+# shellcheck disable=SC2034 # consumed cross-file by caddy/generate-caddyfile.sh
+NO_AUTO_PROXY_TAG="no-auto-proxy"
+
+# Returns 0 when a guest carries <tag> in its Proxmox tags (whole-token match).
+# Separators comma, semicolon and space are all honored; matching is
+# case-insensitive and fixed-string (no regex), so metacharacters are safe.
+# Usage: guest_has_tag ct 100 no-auto-proxy
+guest_has_tag() {
+    local guest_kind="$1"
+    local guest_id="$2"
+    local wanted="$3"
+
+    [ -z "$wanted" ] && return 1
+    local norm wanted_lower
+    norm=$(get_guest_tags "$guest_kind" "$guest_id") || return $?
+    wanted_lower=$(echo "$wanted" | tr '[:upper:]' '[:lower:]')
+    [ -z "$norm" ] && return 1
+    echo ",${norm}," | grep -qF ",${wanted_lower},"
+}
+
+# Prints the raw tag line value of a guest (case and separators preserved).
+# Single owner of the pct/qm tags-line format; fails (2) on unknown kind.
+# Usage: current=$(get_raw_guest_tags ct 100)
+get_raw_guest_tags() {
+    local guest_kind="$1"
+    local guest_id="$2"
+    local cfg=""
+
+    case "$guest_kind" in
+        ct) cfg=$(pct config "$guest_id" 2>/dev/null || true) ;;
+        vm) cfg=$(qm config "$guest_id" 2>/dev/null || true) ;;
+        *) log_error "get_raw_guest_tags: unknown guest kind '$guest_kind'"; return 2 ;;
+    esac
+
+    echo "$cfg" | awk -F': ' '/^[Tt]ags:/ {print $2}'
+}
+
+# Prints the normalized tag list of a guest: lowercase, comma-separated.
+# Fails when the kind is unknown (2) or the guest has no tags (1).
+# Usage: tags=$(get_guest_tags ct 100) || exit 1
+get_guest_tags() {
+    local norm
+    norm=$(get_raw_guest_tags "$1" "$2") || return $?
+    [ -z "$norm" ] && return 1
+    norm=$(echo "$norm" | tr '[:upper:]' '[:lower:]' | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
+    [ -z "$norm" ] && return 1
+    echo "$norm"
+}
+
+# Ensures a guest carries every tag in a comma-separated list. Missing tags
+# are appended while existing ones are preserved untouched. Returns 1 when
+# the set operation fails, so callers can abort instead of continuing
+# without protection (e.g. a missing no-auto-proxy tag).
+# Usage: ensure_guest_tags ct 100 "tailscale,router,no-auto-proxy" || exit 1
+ensure_guest_tags() {
+    local guest_kind="$1"
+    local guest_id="$2"
+    local required_csv="$3"
+
+    case "$guest_kind" in
+        ct|vm) ;;
+        *) log_error "ensure_guest_tags: unknown guest kind '$guest_kind'"; return 2 ;;
+    esac
+
+    local IFS=','
+    local -a required_tags=()
+    read -ra required_tags <<< "$required_csv"
+
+    local tag missing="" current normalized new_tags
+    for tag in "${required_tags[@]}"; do
+        [ -z "$tag" ] && continue
+        if ! guest_has_tag "$guest_kind" "$guest_id" "$tag"; then
+            missing="${missing:+$missing,}$tag"
+        fi
+    done
+    [ -z "$missing" ] && return 0
+
+    # Raw fetch (case preserved) for the write path; matching stays in guest_has_tag.
+    if [ "$guest_kind" = "ct" ]; then
+        current=$(get_raw_guest_tags "ct" "$guest_id")
+    else
+        current=$(get_raw_guest_tags "vm" "$guest_id")
+    fi
+    normalized=$(echo "$current" | sed -E 's/[;, ]+/,/g; s/^,//; s/,$//')
+    new_tags="${normalized:+$normalized,}$missing"
+
+    if [ "$guest_kind" = "ct" ]; then
+        pct set "$guest_id" --tags "$new_tags" 2>/dev/null
+    else
+        qm set "$guest_id" --tags "$new_tags" 2>/dev/null
+    fi
+}
+
+# Reports whether a guest ID looks like a Proxmox numeric ID.
+# Tool output (pct list, pvesh nextid) is a trust boundary: validate before
+# using it in paths or commands.
+# Usage: is_valid_guest_id "$container_id" || exit 1
+is_valid_guest_id() {
+    [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
+# Reports whether a string is a dotted-decimal IPv4 address.
+# Guest-reported addresses are a trust boundary: validate before writing
+# them into generated configs (e.g. Caddy backends).
+# Usage: is_valid_ipv4 "$ip" || continue
+is_valid_ipv4() {
+    [[ "${1:-}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
 }
 
 # Configures ZFS ACLs for specific users and enables inheritance

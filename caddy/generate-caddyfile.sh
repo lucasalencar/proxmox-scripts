@@ -16,8 +16,8 @@ log_step "Caddyfile Generator for *.$DOMAIN"
 echo ""
 
 # --- Verify Caddy container exists ---
-CADDY_ID=$(get_container_id_by_name "$CADDY_CONTAINER_NAME")
-if [ -z "$CADDY_ID" ]; then
+CADDY_ID=$(get_exact_container_id_by_name "$CADDY_CONTAINER_NAME")
+if [ -z "$CADDY_ID" ] || ! is_valid_guest_id "$CADDY_ID"; then
     log_error "Caddy container not found. Run install.sh first."
     exit 1
 fi
@@ -63,6 +63,33 @@ SAVED_NAMES=("${!PORT_MAP[@]}")
 # Final entries to write: parallel indexed arrays (order = generation order)
 FINAL_NAMES=()
 FINAL_IPS=()
+
+# Names of guests skipped via no-auto-proxy (stale blocks for these are dropped)
+SKIPPED_NAMES=()
+
+# Reports whether a saved Caddy block belongs to an excluded (no-auto-proxy)
+# guest, matched by subdomain name (covers DHCP changes).
+# Usage: is_excluded_block <saved_name>
+is_excluded_block() {
+    local block_name="$1"
+    local skipped
+
+    local block_lower
+    block_lower=$(echo "$block_name" | tr '[:upper:]' '[:lower:]')
+    for skipped in "${SKIPPED_NAMES[@]:-}"; do
+        [ -z "$skipped" ] && continue
+        if [ "$block_lower" = "$(echo "$skipped" | tr '[:upper:]' '[:lower:]')" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Records a skipped guest name for stale-block filtering.
+# Usage: remember_skipped_guest <name>
+remember_skipped_guest() {
+    SKIPPED_NAMES+=("$1")
+}
 
 # Records one output entry (creates or updates the subdomain mapping)
 add_entry() {
@@ -148,8 +175,16 @@ while IFS= read -r cid; do
     [ -z "$name" ] && continue
     [ "$name" = "$CADDY_CONTAINER_NAME" ] && continue
 
+    if [ -n "${GUEST_IPS[$name]:-}" ]; then
+        log_warning "  Skipping LXC $cid ($name) — name already used by another guest"
+        continue
+    fi
+
     ip=$(get_container_ip "$cid")
-    [ -z "$ip" ] && continue
+    if ! is_valid_ipv4 "$ip"; then
+        log_warning "  Skipping LXC $cid ($name) — invalid IP '${ip:-none}'"
+        continue
+    fi
 
     GUEST_IDS+=("$cid")
     GUEST_NAMES+=("$name")
@@ -172,21 +207,63 @@ while IFS= read -r vmid; do
     fi
 
     json=$(qm guest exec "$vmid" -- hostname -I 2>/dev/null)
-    ip=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | awk '{print $1}')
-    if [ -z "$ip" ]; then
+    raw_ips=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null)
+    if [ -z "$raw_ips" ]; then
         json=$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)
-        ip=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '^127\.' | head -1)
+        raw_ips=$(echo "$json" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '^127\.' | tr '\n' ' ')
     fi
+    if [ -z "$raw_ips" ]; then
+        raw_ips=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^,\s/]+' | head -1)
+        if is_placeholder_ip "$raw_ips"; then
+            raw_ips=""
+        fi
+    fi
+    ip=$(prefer_ipv4 "$raw_ips")
     if [ -z "$ip" ]; then
-        ip=$(qm config "$vmid" 2>/dev/null | grep -oP 'ipconfig\d:\s*ip=\K[^/]+' | head -1)
+        ip=$(echo "$raw_ips" | awk '{print $1}')
     fi
-    [ -z "$ip" ] && continue
+    if ! is_valid_ipv4 "$ip"; then
+        log_warning "  Skipping VM $vmid ($name) — invalid IP '${ip:-none}'"
+        continue
+    fi
 
     GUEST_IDS+=("$vmid")
     GUEST_NAMES+=("$name")
     GUEST_TYPES+=("vm")
     GUEST_IPS["$name"]="$ip"
 done < <(qm list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -n)
+
+# --- Partition out guests tagged no-auto-proxy (before any route decisions,
+# so excluded blocks can never be re-attached by IP reuse or stale entries) ---
+KEPT_IDS=()
+KEPT_NAMES=()
+KEPT_TYPES=()
+for i in "${!GUEST_IDS[@]}"; do
+    guest_name="${GUEST_NAMES[$i]}"
+    guest_id="${GUEST_IDS[$i]}"
+    guest_type="${GUEST_TYPES[$i]}"
+    if guest_has_tag "$guest_type" "$guest_id" "$NO_AUTO_PROXY_TAG"; then
+        if [ "$guest_type" = "ct" ]; then
+            log_info "  Skipping LXC $guest_id ($guest_name) — tagged $NO_AUTO_PROXY_TAG"
+        else
+            log_info "  Skipping VM $guest_id ($guest_name) — tagged $NO_AUTO_PROXY_TAG"
+        fi
+        remember_skipped_guest "$guest_name"
+        continue
+    fi
+    KEPT_IDS+=("$guest_id")
+    KEPT_NAMES+=("$guest_name")
+    KEPT_TYPES+=("$guest_type")
+done
+if [ "${#KEPT_IDS[@]}" -eq 0 ]; then
+    GUEST_IDS=()
+    GUEST_NAMES=()
+    GUEST_TYPES=()
+else
+    GUEST_IDS=("${KEPT_IDS[@]}")
+    GUEST_NAMES=("${KEPT_NAMES[@]}")
+    GUEST_TYPES=("${KEPT_TYPES[@]}")
+fi
 
 TOTAL=${#GUEST_NAMES[@]}
 if [ "$TOTAL" -eq 0 ]; then
@@ -213,17 +290,28 @@ for i in $(seq 0 $((TOTAL - 1))); do
 
     if [ -n "$saved_services" ]; then
         log_info "  $CHECK $name $ARROW saved multi-service:"
+        kept_saved_service="n"
         while IFS= read -r svc; do
             [ -z "$svc" ] && continue
+            # Never re-attach a block that belongs to an excluded guest,
+            # even when it shares this guest's IP (DHCP reuse).
+            if is_excluded_block "$svc"; then
+                log_warning "  Dropping saved block $svc.$DOMAIN — guest tagged $NO_AUTO_PROXY_TAG" >&2
+                continue
+            fi
             log_info "    $CHECK $svc.$DOMAIN $ARROW $ip:${PORT_MAP[$svc]}"
             add_entry "$svc" "$ip" "${PORT_MAP[$svc]}"
+            kept_saved_service="y"
         done <<< "$saved_services"
-        if [ -n "${PORT_MAP[$name]:-}" ]; then
-            log_info "  $CHECK $name $ARROW saved port ${PORT_MAP[$name]}"
-            add_entry "$name" "$ip" "${PORT_MAP[$name]}"
-            prompt_tls "$name"
+        if [ "$kept_saved_service" = "y" ]; then
+            if [ -n "${PORT_MAP[$name]:-}" ]; then
+                log_info "  $CHECK $name $ARROW saved port ${PORT_MAP[$name]}"
+                add_entry "$name" "$ip" "${PORT_MAP[$name]}"
+                prompt_tls "$name"
+            fi
+            continue
         fi
-        continue
+        # All saved blocks were excluded: fall through to normal detection.
     fi
 
     if [ -n "${PORT_MAP[$name]:-}" ]; then
@@ -236,12 +324,12 @@ for i in $(seq 0 $((TOTAL - 1))); do
     listening_ports=""
     if [ "$type" = "ct" ]; then
         if pct status "$gid" 2>/dev/null | grep -q "running"; then
-            listening_ports=$(pct exec "$gid" -- ss -tlnp 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+            listening_ports=$(pct exec "$gid" -- ss -tlnp 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | grep -E '^[0-9]+$' | sort -n | uniq)
         fi
     else
         if qm status "$gid" 2>/dev/null | grep -q "running"; then
             output=$(qm guest exec "$gid" -- ss -tlnp 2>/dev/null)
-            listening_ports=$(echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq)
+            listening_ports=$(echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | grep -E '^[0-9]+$' | sort -n | uniq)
         fi
     fi
 
@@ -350,6 +438,12 @@ echo ""
             fi
         done
         if [ "$is_final" = "n" ]; then
+            # Drop stale blocks that belong to a guest tagged no-auto-proxy:
+            # keeping them would silently re-publish a guest the operator excluded.
+            if is_excluded_block "$saved"; then
+                log_warning "  Dropping stale block $saved.$DOMAIN (${IP_MAP[$saved]:-unknown}:${PORT_MAP[$saved]:-unknown}) — guest tagged no-auto-proxy" >&2
+                continue
+            fi
             log_warning "  Preserving unmanaged block $saved.$DOMAIN (${IP_MAP[$saved]:-unknown}:${PORT_MAP[$saved]:-unknown})" >&2
             if [ "${TLS_MAP[$saved]:-http}" = "https" ]; then
                 echo "$saved.$DOMAIN {"
