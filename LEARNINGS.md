@@ -1,5 +1,7 @@
 # Learnings from previous sessions
 
+- **TDD for behavior removal (Red via prod-first):** when deleting a guarantee, change production code first and treat the exact failing-test set as blast-radius confirmation — only the tests pinning removed behavior should fail (e.g. 5 upgrade tests for dropped TUN/forwarding checks; 4 orphan-helper tests after deleting a function). Update/delete exactly that set for Green. For rewritten residual behavior, write the new assertion first and confirm Red before touching prod.
+
 - **`trust-nextcloud.sh` — always also search for "nextcloudpi" container name:** The script only looked for "nextcloud" via `get_container_id_by_name`, but NextcloudPi Community Script creates a container named "nextcloudpi". Always fallback to "nextcloudpi" if "nextcloud" is not found.
 
 - **Caddy reverse proxy + NextcloudPi (HTTPS redirect loop fix):**
