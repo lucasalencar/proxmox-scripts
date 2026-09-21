@@ -9,6 +9,9 @@ QBIT_USER="admin"
 QBIT_PORT="8090"
 QBIT_HOST=""
 QBIT_PASS="${QBIT_PASS:-}"
+JELLYFIN_HOST=""
+JELLYFIN_PORT="8096"
+JELLYFIN_API_KEY="${JELLYFIN_API_KEY:-}"
 PROWLARR_USER="${STARR_PROWLARR_USER:-admin}"
 PROWLARR_PASS="${STARR_PROWLARR_PASS:-}"
 SONARR_USER="${STARR_SONARR_USER:-admin}"
@@ -22,6 +25,7 @@ SKIP_AUTH=0
 SKIP_BAZARR=0
 SKIP_FLARESOLVERR=0
 SKIP_QBIT=0
+SKIP_SEERR=0
 DRY_RUN=0
 
 usage() {
@@ -41,10 +45,15 @@ usage() {
     echo "  --bazarr-user <u>    Bazarr login user (or STARR_BAZARR_USER env, default: admin)" >&2
     echo "  --bazarr-pass <p>    Bazarr login password (or STARR_BAZARR_PASS env, generated when absent)" >&2
     echo "  --auth-method <m>    Servarr auth method: forms|basic (default: $AUTH_METHOD)" >&2
+    echo "  --jellyfin-host <ip>   Jellyfin container IP (default: auto-discovered)" >&2
+    echo "  --jellyfin-port <port> Jellyfin port (default: $JELLYFIN_PORT)" >&2
+    echo "  --jellyfin-api-key <k> Jellyfin API key (or JELLYFIN_API_KEY env, from Jellyfin Dashboard -> API Keys)" >&2
+    echo "                         Without it Seerr still wires Sonarr/Radarr; Jellyfin stays for the web wizard." >&2
     echo "  --skip-auth          Skip per-app login configuration" >&2
     echo "  --skip-qbit          Skip qBittorrent download client + login check (no --qbit-pass needed)" >&2
     echo "  --skip-bazarr        Skip Bazarr Sonarr/Radarr linking" >&2
     echo "  --skip-flaresolverr  Skip Prowlarr FlareSolverr proxy" >&2
+    echo "  --skip-seerr         Skip Seerr Sonarr/Radarr/Jellyfin wiring" >&2
     echo "  --dry-run            Show planned actions without changing anything (services must still be up; password is not validated in this mode)" >&2
     echo "" >&2
     echo "Notes:" >&2
@@ -81,10 +90,14 @@ while [ $# -gt 0 ]; do
         --bazarr-user) need_value "$1" "${2:-}"; BAZARR_USER="$2"; shift 2 ;;
         --bazarr-pass) need_value "$1" "${2:-}"; BAZARR_PASS="$2"; shift 2 ;;
         --auth-method) need_value "$1" "${2:-}"; AUTH_METHOD="$2"; shift 2 ;;
+        --jellyfin-host) need_value "$1" "${2:-}"; JELLYFIN_HOST="$2"; shift 2 ;;
+        --jellyfin-port) need_value "$1" "${2:-}"; JELLYFIN_PORT="$2"; shift 2 ;;
+        --jellyfin-api-key) need_value "$1" "${2:-}"; JELLYFIN_API_KEY="$2"; shift 2 ;;
         --skip-auth) SKIP_AUTH=1; shift ;;
         --skip-qbit) SKIP_QBIT=1; shift ;;
         --skip-bazarr) SKIP_BAZARR=1; shift ;;
         --skip-flaresolverr) SKIP_FLARESOLVERR=1; shift ;;
+        --skip-seerr) SKIP_SEERR=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;
@@ -99,6 +112,11 @@ fi
 
 if ! [[ "$QBIT_PORT" =~ ^[0-9]+$ ]] || (( 10#$QBIT_PORT < 1 || 10#$QBIT_PORT > 65535 )); then
     log_error "Invalid qBittorrent port: '$QBIT_PORT' (must be between 1 and 65535)."
+    exit 1
+fi
+
+if ! [[ "$JELLYFIN_PORT" =~ ^[0-9]+$ ]] || (( 10#$JELLYFIN_PORT < 1 || 10#$JELLYFIN_PORT > 65535 )); then
+    log_error "Invalid Jellyfin port: '$JELLYFIN_PORT' (must be between 1 and 65535)."
     exit 1
 fi
 
@@ -160,7 +178,23 @@ if [ "$SKIP_QBIT" -eq 0 ] && [ -z "$QBIT_HOST" ]; then
     fi
 fi
 
-log_step "Configuring Starr integrations (container $starr_id${QBIT_HOST:+, qBittorrent at $QBIT_HOST:$QBIT_PORT})..."
+if [ "$SKIP_SEERR" -eq 0 ] && [ -z "$JELLYFIN_HOST" ]; then
+    jellyfin_id=$(get_exact_container_id_by_name "jellyfin" || true)
+    if [ -n "$jellyfin_id" ]; then
+        JELLYFIN_HOST=$(get_container_ip "$jellyfin_id")
+        if [ -z "$JELLYFIN_HOST" ]; then
+            log_error "Could not determine Jellyfin container IP. Pass --jellyfin-host explicitly."
+            exit 1
+        fi
+    elif [ -n "$JELLYFIN_API_KEY" ]; then
+        log_error "Could not find container 'jellyfin' but a Jellyfin API key was given. Pass --jellyfin-host explicitly or pass --skip-seerr."
+        exit 1
+    else
+        log_warning "Could not find container 'jellyfin' — Seerr will wire Sonarr/Radarr only (pass --jellyfin-host to link Jellyfin)."
+    fi
+fi
+
+log_step "Configuring Starr integrations (container $starr_id${QBIT_HOST:+, qBittorrent at $QBIT_HOST:$QBIT_PORT}${JELLYFIN_HOST:+, Jellyfin at $JELLYFIN_HOST:$JELLYFIN_PORT})..."
 wait_container_ready "$starr_id" || exit 1
 
 REMOTE="/root/starr-configure-$$.py"
@@ -178,12 +212,19 @@ fi
 [ "$SKIP_AUTH" -eq 0 ] && extra_args+=(--auth-method "$AUTH_METHOD")
 [ "$SKIP_BAZARR" -eq 1 ] && extra_args+=(--skip-bazarr)
 [ "$SKIP_FLARESOLVERR" -eq 1 ] && extra_args+=(--skip-flaresolverr)
+[ "$SKIP_SEERR" -eq 1 ] && extra_args+=(--skip-seerr)
+if [ "$SKIP_SEERR" -eq 0 ] && [ -n "$JELLYFIN_HOST" ]; then
+    extra_args+=(--jellyfin-host "$JELLYFIN_HOST" --jellyfin-port "$JELLYFIN_PORT")
+fi
 [ "$DRY_RUN" -eq 1 ] && extra_args+=(--dry-run)
 
 AUTH_REMOTE="/root/starr-auth-$$.env"
 AUTH_LOCAL=""
+SEERR_REMOTE="/root/starr-seerr-$$.env"
+SEERR_LOCAL=""
 cleanup_auth() {
     [ -n "$AUTH_LOCAL" ] && rm -f "$AUTH_LOCAL"
+    [ -n "$SEERR_LOCAL" ] && rm -f "$SEERR_LOCAL"
 }
 trap cleanup_auth EXIT
 if [ "$SKIP_AUTH" -eq 0 ]; then
@@ -212,6 +253,23 @@ if [ "$SKIP_AUTH" -eq 0 ]; then
     extra_args+=(--auth-file "$AUTH_REMOTE")
 fi
 
+# Jellyfin API key travels in its own 0600 file so Seerr-only runs
+# (--skip-auth) can still link the media server without touching logins
+if [ "$SKIP_SEERR" -eq 0 ] && [ -n "$JELLYFIN_API_KEY" ]; then
+    SEERR_LOCAL="$(mktemp)" || { log_error "Failed to create temp Seerr file."; exit 1; }
+    chmod 600 "$SEERR_LOCAL"
+    printf 'jellyfin_api_key=%s\n' "$JELLYFIN_API_KEY" > "$SEERR_LOCAL"
+    if ! pct push "$starr_id" "$SEERR_LOCAL" "$SEERR_REMOTE"; then
+        log_error "Failed to push Seerr file to container $starr_id"
+        exit 1
+    fi
+    if ! pct exec "$starr_id" -- chmod 600 "$SEERR_REMOTE"; then
+        log_error "Failed to secure Seerr file inside container $starr_id"
+        exit 1
+    fi
+    extra_args+=(--seerr-env "$SEERR_REMOTE")
+fi
+
 if [ "$SKIP_QBIT" -eq 1 ]; then
     pct exec "$starr_id" -- python3 "$REMOTE" "${extra_args[@]}"
     pct_status=$?
@@ -221,6 +279,7 @@ else
 fi
 # Remove remote secrets regardless of outcome
 [ "$SKIP_AUTH" -eq 0 ] && pct exec "$starr_id" -- rm -f "$AUTH_REMOTE" "$REMOTE" >/dev/null 2>&1 || true
+[ -n "$SEERR_LOCAL" ] && pct exec "$starr_id" -- rm -f "$SEERR_REMOTE" >/dev/null 2>&1 || true
 if [ "$pct_status" -ne 0 ]; then
     log_error "Starr configure failed inside container $starr_id"
     exit 1
@@ -236,4 +295,5 @@ if [ "$SKIP_AUTH" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
 fi
 log_info "Verify: Prowlarr Settings -> Apps, Sonarr/Radarr Settings -> Download Clients -> Test,"
 log_info "  Prowlarr Settings -> Indexers -> Indexer Proxies -> FlareSolverr -> Test,"
-log_info "  Bazarr Settings -> Sonarr/Radarr -> Test connection."
+log_info "  Bazarr Settings -> Sonarr/Radarr -> Test connection,"
+log_info "  Seerr Settings -> Services -> Sonarr/Radarr -> Test, Seerr Settings -> Media Server -> Test."

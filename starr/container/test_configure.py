@@ -1017,9 +1017,10 @@ class SummaryShapeTests(unittest.TestCase):
         self.assertEqual(set(summary.keys()),
                          {"dry_run", "versions", "prowlarr_apps",
                           "download_clients", "root_folders", "bazarr", "auth",
-                          "flaresolverr", "qbit"})
+                          "flaresolverr", "qbit", "seerr"})
         self.assertEqual(summary["flaresolverr"], "configured")
         self.assertEqual(summary["qbit"], "configured")
+        self.assertEqual(summary["seerr"], "skipped")
 
     def test_fields_round_trip(self):
         cmap = configure.fields_map(
@@ -1223,6 +1224,8 @@ class MainQbitSkipTests(unittest.TestCase):
                                         return_value="unchanged"), \
              unittest.mock.patch.object(configure, "ensure_flaresolverr",
                                         return_value="unchanged"), \
+             unittest.mock.patch.object(configure, "ensure_seerr",
+                                        return_value="skipped"), \
              unittest.mock.patch.object(configure.sys, "stdin", stdin), \
              contextlib.redirect_stdout(out):
             configure.main(argv)
@@ -1282,6 +1285,188 @@ class MainQbitSkipTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_main(["--qbit-host", "1.2.3.4", "--skip-auth"],
                           unittest.mock.Mock())
+
+
+class SeerrBuilderTests(unittest.TestCase):
+    def test_sonarr_payload_shape(self):
+        payload = configure.build_seerr_sonarr("SKEY", 1, "HD-1080p", "/data/media/Series")
+        self.assertEqual(payload["name"], "Sonarr")
+        self.assertEqual(payload["hostname"], "localhost")
+        self.assertEqual(payload["port"], configure.SONARR_PORT)
+        self.assertEqual(payload["apiKey"], "SKEY")
+        self.assertIs(payload["useSsl"], False)
+        self.assertTrue(payload["isDefault"])
+        self.assertEqual(payload["activeProfileId"], 1)
+        self.assertEqual(payload["activeDirectory"], "/data/media/Series")
+
+    def test_radarr_payload_shape(self):
+        payload = configure.build_seerr_radarr("RKEY", 2, "HD-1080p", "/data/media/Movies")
+        self.assertEqual(payload["name"], "Radarr")
+        self.assertEqual(payload["hostname"], "localhost")
+        self.assertEqual(payload["port"], configure.RADARR_PORT)
+        self.assertEqual(payload["apiKey"], "RKEY")
+        self.assertIs(payload["useSsl"], False)
+        self.assertTrue(payload["isDefault"])
+
+    def test_jellyfin_payload_shape(self):
+        payload = configure.build_seerr_jellyfin("10.9.9.9", 8096, "JKEY")
+        self.assertEqual(payload["ip"], "10.9.9.9")
+        self.assertEqual(payload["port"], 8096)
+        self.assertEqual(payload["apiKey"], "JKEY")
+        self.assertIs(payload["useSsl"], False)
+
+    def test_parse_args_wires_seerr_flags(self):
+        args = configure.parse_args(["--skip-qbit", "--skip-auth",
+                                     "--jellyfin-host", "10.9.9.9",
+                                     "--jellyfin-port", "8096"])
+        self.assertTrue(args.skip_seerr is False)
+        self.assertEqual(args.jellyfin_host, "10.9.9.9")
+        self.assertEqual(args.jellyfin_port, 8096)
+        self.assertTrue(configure.parse_args(["--skip-seerr"]).skip_seerr)
+        with self.assertRaises(SystemExit):
+            configure.parse_args(["--jellyfin-port", "0"])
+        with self.assertRaises(SystemExit):
+            configure.parse_args(["--jellyfin-host", "not-an-ip"])
+
+
+class FakeSeerrTransport:
+    """Path-routed Seerr fake: serves sonarr/radarr lists, records writes."""
+
+    def __init__(self, sonarr=None, radarr=None):
+        self.sonarr = [dict(s) for s in (sonarr or [])]
+        self.radarr = [dict(r) for r in (radarr or [])]
+        self.calls = []
+
+    def __call__(self, method, path, api_key, body=None):
+        self.calls.append((method, path, body))
+        route = path.split("?")[0]
+        if method == "GET":
+            if route == configure.SEERR_SONARR_PATH:
+                return copy.deepcopy(self.sonarr)
+            if route == configure.SEERR_RADARR_PATH:
+                return copy.deepcopy(self.radarr)
+            return []
+        if route == configure.SEERR_SONARR_PATH:
+            self.sonarr.append(dict(body, id=len(self.sonarr)))
+            return {"id": len(self.sonarr) - 1}
+        if route == configure.SEERR_RADARR_PATH:
+            self.radarr.append(dict(body, id=len(self.radarr)))
+            return {"id": len(self.radarr) - 1}
+        return {"ok": True}
+
+    def writes(self):
+        return [call for call in self.calls if call[0] != "GET"]
+
+
+class SeerrEnsureTests(unittest.TestCase):
+    def setUp(self):
+        self._orig = configure.seerr_request
+        self.addCleanup(setattr, configure, "seerr_request", self._orig)
+
+    def test_sonarr_created_when_empty(self):
+        transport = FakeSeerrTransport()
+        with unittest.mock.patch.object(configure, "seerr_request", transport):
+            action = configure.ensure_seerr_sonarr(
+                "APIKEY", "SKEY", 1, "HD-1080p", "/data/media/Series", False)
+        self.assertEqual(action, "created")
+        self.assertEqual(len(transport.writes()), 1)
+        self.assertEqual(transport.writes()[0][1], configure.SEERR_SONARR_PATH)
+
+    def test_sonarr_unchanged_writes_nothing(self):
+        existing = configure.build_seerr_sonarr("SKEY", 1, "HD-1080p",
+                                                "/data/media/Series")
+        existing["id"] = 0
+        transport = FakeSeerrTransport(sonarr=[existing])
+        with unittest.mock.patch.object(configure, "seerr_request", transport):
+            action = configure.ensure_seerr_sonarr(
+                "APIKEY", "SKEY", 1, "HD-1080p", "/data/media/Series", False)
+        self.assertEqual(action, "unchanged")
+        self.assertEqual(transport.writes(), [])
+
+    def test_sonarr_drifted_is_updated(self):
+        existing = configure.build_seerr_sonarr("OLD", 9, "Other", "/old")
+        existing["id"] = 0
+        transport = FakeSeerrTransport(sonarr=[existing])
+        with unittest.mock.patch.object(configure, "seerr_request", transport):
+            action = configure.ensure_seerr_sonarr(
+                "APIKEY", "SKEY", 1, "HD-1080p", "/data/media/Series", False)
+        self.assertEqual(action, "updated")
+        puts = [c for c in transport.writes() if c[0] == "PUT"]
+        self.assertEqual(len(puts), 1)
+        self.assertIn("/api/v1/settings/sonarr/0", puts[0][1])
+
+    def test_sonarr_dry_run_writes_nothing(self):
+        transport = FakeSeerrTransport()
+        with unittest.mock.patch.object(configure, "seerr_request", transport):
+            action = configure.ensure_seerr_sonarr(
+                "APIKEY", "SKEY", 1, "HD-1080p", "/data/media/Series", True)
+        self.assertEqual(action, "would_configure")
+        self.assertEqual(transport.writes(), [])
+
+    def test_radarr_created_when_empty(self):
+        transport = FakeSeerrTransport()
+        with unittest.mock.patch.object(configure, "seerr_request", transport):
+            action = configure.ensure_seerr_radarr(
+                "APIKEY", "RKEY", 2, "HD-1080p", "/data/media/Movies", False)
+        self.assertEqual(action, "created")
+        self.assertEqual(len(transport.writes()), 1)
+
+    def test_jellyfin_skipped_without_key(self):
+        with unittest.mock.patch.object(configure, "seerr_request") as req:
+            self.assertEqual(
+                configure.ensure_seerr_jellyfin("APIKEY", "10.9.9.9", 8096,
+                                                "", False),
+                "skipped_no_key")
+            req.assert_not_called()
+
+    def test_jellyfin_posts_with_key(self):
+        calls = []
+
+        def fake(method, path, api_key, body=None):
+            calls.append((method, path, body))
+            return dict(body or {})
+
+        with unittest.mock.patch.object(configure, "seerr_request",
+                                        side_effect=fake):
+            action = configure.ensure_seerr_jellyfin(
+                "APIKEY", "10.9.9.9", 8096, "JKEY", False)
+        self.assertEqual(action, "configured")
+        self.assertEqual(calls[0][1], configure.SEERR_JELLYFIN_PATH)
+        self.assertEqual(calls[0][2]["apiKey"], "JKEY")
+
+    def test_jellyfin_dry_run_writes_nothing(self):
+        with unittest.mock.patch.object(configure, "seerr_request") as req:
+            action = configure.ensure_seerr_jellyfin(
+                "APIKEY", "10.9.9.9", 8096, "JKEY", True)
+        self.assertEqual(action, "would_configure")
+        req.assert_not_called()
+
+    def test_seerr_api_key_loads_from_settings_json(self):
+        doc = {"main": {"apiKey": "SEERRKEY"}, "public": {"initialized": True}}
+        path = write_temp(json.dumps(doc), suffix=".json")
+        try:
+            self.assertEqual(configure.read_seerr_api_key(path), "SEERRKEY")
+        finally:
+            os.unlink(path)
+
+    def test_seerr_api_key_missing_fails(self):
+        path = write_temp(json.dumps({"main": {}}), suffix=".json")
+        try:
+            with self.assertRaises(SystemExit):
+                configure.read_seerr_api_key(path, timeout=1)
+        finally:
+            os.unlink(path)
+
+    def test_summary_carries_seerr(self):
+        summary = configure.build_summary(
+            {"sonarr": "4.x"},
+            {"created": 0, "updated": 0, "unchanged": 0},
+            {"created": 0, "updated": 0, "unchanged": 0},
+            {"created": 0, "updated": 0, "unchanged": 0},
+            "linked", False,
+            {"sonarr": "updated"},
+            "configured", "configured", "configured")
+        self.assertEqual(summary["seerr"], "configured")
 
 
 if __name__ == "__main__":

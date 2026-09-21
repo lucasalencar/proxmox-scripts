@@ -107,9 +107,45 @@ else
     log "flaresolverr not installed — skipping"
 fi
 
+# Seerr: pull latest source, rebuild, restart (config dir is preserved)
+if [ -d /opt/seerr ] || [ -f /etc/systemd/system/seerr.service ]; then
+    log "Refreshing seerr..."
+    refreshed=0
+    if [ -d /opt/seerr/.git ]; then
+        systemctl stop seerr 2>/dev/null || true
+        if git -C /opt/seerr pull --ff-only 2>/dev/null; then
+            cd /opt/seerr
+            export CYPRESS_INSTALL_BINARY=0
+            if pnpm install --frozen-lockfile 2>/dev/null; then
+                export NODE_OPTIONS="--max-old-space-size=3072"
+                if pnpm build 2>/dev/null; then
+                    refreshed=1
+                fi
+            fi
+        else
+            log "  git pull failed — keeping the installed version"
+        fi
+        if ! systemctl restart seerr 2>/dev/null; then
+            systemctl start seerr 2>/dev/null || true
+        fi
+    else
+        log "  /opt/seerr has no git checkout — keeping the installed version"
+    fi
+    if systemctl is-active --quiet seerr; then
+        log "  seerr: active"
+    elif [ "$refreshed" -eq 1 ]; then
+        log "  seerr: not active after restart"
+    else
+        log "  seerr: untouched (still on the previous version)"
+    fi
+else
+    log "seerr not installed — skipping"
+fi
+
 log "Update check complete. Service status:"
 systemctl is-active --quiet prowlarr && log "  prowlarr: active" || log "  prowlarr: inactive"
 systemctl is-active --quiet sonarr && log "  sonarr: active" || log "  sonarr: inactive"
 systemctl is-active --quiet radarr && log "  radarr: active" || log "  radarr: inactive"
 systemctl is-active --quiet bazarr && log "  bazarr: active" || log "  bazarr: inactive"
 systemctl is-active --quiet flaresolverr && log "  flaresolverr: active" || log "  flaresolverr: inactive"
+systemctl is-active --quiet seerr && log "  seerr: active" || log "  seerr: inactive"

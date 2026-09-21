@@ -5,7 +5,7 @@ source "$SCRIPT_DIR/../common/functions.sh"
 
 require_root
 
-log_step "Starting Starr stack installation (Prowlarr + Sonarr + Radarr + Bazarr) — single LXC..."
+log_step "Starting Starr stack installation (Prowlarr + Sonarr + Radarr + Bazarr + Seerr) — single LXC..."
 
 # --- 1. Create / find container ---
 container_id=$(get_exact_container_id_by_name "starr")
@@ -31,7 +31,7 @@ if [ -z "$container_id" ]; then
     TEMPLATE=$(ensure_debian_template "13" "$TEMPLATE_STORAGE") || exit 1
     TEMPLATE_FILE=$(basename "$TEMPLATE")
 
-    if ! create_lxc_container "$CTID" "starr" "$TEMPLATE_STORAGE" "$TEMPLATE_FILE" "$ROOTFS_STORAGE" "$BRIDGE" "$CT_CORES" "$CT_MEMORY" "$CT_DISK" "$CT_SWAP" "starr,arr,media" "Starr single CT: Prowlarr (9696), Sonarr (8989), Radarr (7878), Bazarr (6767). Managed by proxmox-scripts/starr."; then
+    if ! create_lxc_container "$CTID" "starr" "$TEMPLATE_STORAGE" "$TEMPLATE_FILE" "$ROOTFS_STORAGE" "$BRIDGE" "$CT_CORES" "$CT_MEMORY" "$CT_DISK" "$CT_SWAP" "starr,arr,media" "Starr single CT: Prowlarr (9696), Sonarr (8989), Radarr (7878), Bazarr (6767), Seerr (5055). Managed by proxmox-scripts/starr."; then
         log_error "Failed to create starr LXC"
         exit 1
     fi
@@ -77,6 +77,7 @@ if [ -n "$container_ip" ]; then
     log_success "  Sonarr:   http://${container_ip}:8989"
     log_success "  Radarr:   http://${container_ip}:7878"
     log_success "  Bazarr:   http://${container_ip}:6767"
+    log_success "  Seerr:    http://${container_ip}:5055"
     log_success "──────────────────────────────────────────────────────"
     echo ""
     log_info "Next steps (TRaSH Guides):"
@@ -85,8 +86,9 @@ if [ -n "$container_ip" ]; then
     log_info "     sonarr.marx.home   -> ${container_ip}:8989"
     log_info "     radarr.marx.home   -> ${container_ip}:7878"
     log_info "     bazarr.marx.home   -> ${container_ip}:6767"
+    log_info "     seerr.marx.home    -> ${container_ip}:5055"
     log_info "     FlareSolverr listens on 127.0.0.1:8191 for Prowlarr only — no Caddy entry."
-    log_info "     Run: bash caddy/generate-caddyfile.sh and answer 4 times for 'starr' when prompted for ports."
+    log_info "     Run: bash caddy/generate-caddyfile.sh and answer 5 times for 'starr' when prompted for ports."
     echo ""
     log_info "  2. Configure qBittorrent categories to match (already done via qbittorrent/install.sh:40):"
     log_info "     Sonarr -> Category 'series' -> /data/downloads/series"
@@ -95,6 +97,9 @@ if [ -n "$container_ip" ]; then
     log_info "  4. In Prowlarr: Settings -> Apps -> Add Sonarr/Radarr (use http://localhost:8989 / 7878 inside CT)"
     log_info "  5. Follow https://trash-guides.info/Radarr/Radarr-Quality-Settings-File-Size/ and"
     log_info "     https://trash-guides.info/Sonarr/Sonarr-Quality-Settings-File-Size/"
+    log_info "  6. Open Seerr at http://${container_ip}:5055 and finish the setup wizard"
+    log_info "     (Jellyfin login), then wire Sonarr/Radarr/Jellyfin with:"
+    log_info "     bash starr/configure.sh --skip-qbit --skip-auth --skip-bazarr --skip-flaresolverr"
 else
     log_success "Starr stack installed (container $container_id) — could not determine IP, check: pct exec $container_id -- hostname -I"
 fi

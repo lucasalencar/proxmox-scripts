@@ -7,7 +7,7 @@ log() { echo "[starr-install] $*"; }
 log "Updating OS and installing base dependencies..."
 apt update
 apt upgrade -y
-apt install -y curl sqlite3 libicu-dev unzip ca-certificates gnupg python3 python3-venv python3-pip python3-ruamel.yaml libssl-dev
+apt install -y curl sqlite3 libicu-dev unzip ca-certificates gnupg python3 python3-venv python3-pip python3-ruamel.yaml libssl-dev git build-essential
 
 # Detect arch for Servarr download URLs (same mapping as upstream install scripts)
 ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
@@ -284,7 +284,89 @@ else
     log "Bazarr already installed — skipping"
 fi
 
+# Seerr (Jellyfin request manager, successor of Jellyseerr) listens on 5055
+# Usage: wait_seerr [timeout_seconds]
+wait_seerr() {
+    local timeout="${1:-120}"
+    local started=$SECONDS
+    while [ $((SECONDS - started)) -lt "$timeout" ]; do
+        if curl -fsS "http://127.0.0.1:5055/api/v1/settings/public" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
+# Install Seerr idempotently: Node 22 + pnpm build from seerr-team/seerr
+install_seerr() {
+    local unit="/etc/systemd/system/seerr.service"
+
+    if [ -f "$unit" ]; then
+        log "Seerr already installed — skipping"
+        return 0
+    fi
+
+    local node_major=""
+    if command -v node >/dev/null 2>&1; then
+        node_major=$(node --version 2>/dev/null | grep -oP '^v\K[0-9]+' || echo "")
+    fi
+    if [ "$node_major" != "22" ]; then
+        log "Installing Node.js 22 (found: ${node_major:-none})..."
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        apt install -y nodejs
+    fi
+    if ! command -v pnpm >/dev/null 2>&1; then
+        log "Enabling pnpm via corepack..."
+        corepack enable 2>/dev/null || npm install -g pnpm 2>/dev/null || true
+    fi
+
+    if [ ! -d /opt/seerr ]; then
+        log "Cloning seerr-team/seerr..."
+        git clone https://github.com/seerr-team/seerr.git /opt/seerr
+    fi
+    cd /opt/seerr
+
+    log "Building Seerr (this may take several minutes)..."
+    export CYPRESS_INSTALL_BINARY=0
+    pnpm install --frozen-lockfile
+    export NODE_OPTIONS="--max-old-space-size=3072"
+    pnpm build
+
+    mkdir -p /etc/seerr
+    if [ ! -f /etc/seerr/seerr.conf ]; then
+        printf 'PORT=5055\n' > /etc/seerr/seerr.conf
+    fi
+
+    cat >"$unit" <<EOF
+[Unit]
+Description=Seerr Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/seerr/seerr.conf
+Environment=NODE_ENV=production
+Type=exec
+Restart=on-failure
+WorkingDirectory=/opt/seerr
+ExecStart=/usr/bin/node dist/index.js
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now seerr
+    if wait_seerr; then
+        log "Seerr installed and answering on 127.0.0.1:5055"
+    else
+        log "  Seerr installed but not answering yet — check: journalctl -u seerr"
+    fi
+}
+
 install_flaresolverr
+
+install_seerr
 
 log "All Starr apps installed. Checking services..."
 systemctl is-active --quiet prowlarr && log "  prowlarr: active" || log "  prowlarr: not active"
@@ -292,3 +374,4 @@ systemctl is-active --quiet sonarr && log "  sonarr: active" || log "  sonarr: n
 systemctl is-active --quiet radarr && log "  radarr: active" || log "  radarr: not active"
 systemctl is-active --quiet bazarr && log "  bazarr: active" || log "  bazarr: not active"
 systemctl is-active --quiet flaresolverr && log "  flaresolverr: active" || log "  flaresolverr: not active"
+systemctl is-active --quiet seerr && log "  seerr: active" || log "  seerr: not active"
