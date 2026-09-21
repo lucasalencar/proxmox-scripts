@@ -101,11 +101,11 @@ detect_ports() {
     local output
     if [ "$guest_type" = "ct" ]; then
         if pct status "$guest_id" 2>/dev/null | grep -q "running"; then
-            pct exec "$guest_id" -- ss -tlnp 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq
+            pct exec "$guest_id" -- ss -tlnp </dev/null 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq
         fi
     else
         if qm status "$guest_id" 2>/dev/null | grep -q "running"; then
-            output=$(qm guest exec "$guest_id" -- ss -tlnp 2>/dev/null)
+            output=$(qm guest exec "$guest_id" -- ss -tlnp </dev/null 2>/dev/null)
             echo "$output" | jq -r '.["out-data"] // .["out"] // empty' 2>/dev/null | tail -n +2 | awk '{n=split($4, a, ":"); print a[n]}' | sort -n | uniq
         fi
     fi
@@ -140,16 +140,16 @@ echo '[]' > "$GUESTS_JSON"
 for i in $(seq 0 $((TOTAL - 1))); do
     name="${GUEST_NAMES[$i]}"
     gid="${GUEST_IDS[$i]}"
-    type="${GUEST_TYPES[$i]}"
+    guest_type="${GUEST_TYPES[$i]}"
     ip="${GUEST_IPS[$name]}"
 
-    listening_ports=$(detect_ports "$type" "$gid")
+    listening_ports=$(detect_ports "$guest_type" "$gid")
     if [ -n "$listening_ports" ]; then
         log_info "  Detected ports for $name: $(echo "$listening_ports" | tr '\n' ' ')"
     fi
     ports_json=$(printf '%s' "$listening_ports" | jq -R -s '[split("\n")[] | select(test("^[0-9]+$")) | tonumber]' || true)
     [ -z "$ports_json" ] && ports_json="[]"
-    guests_updated=$(jq --arg name "$name" --arg gid "$gid" --arg type "$type" --arg ip "$ip" --argjson ports "$ports_json" \
+    guests_updated=$(jq --arg name "$name" --arg gid "$gid" --arg type "$guest_type" --arg ip "$ip" --argjson ports "$ports_json" \
         '. + [{name: $name, gid: $gid, gtype: $type, ip: $ip, ports: $ports}]' "$GUESTS_JSON")
     echo "$guests_updated" > "$GUESTS_JSON"
 done

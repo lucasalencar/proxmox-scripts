@@ -9,6 +9,7 @@ import io
 import os
 import sys
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -262,6 +263,86 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(entries[0].tls, "https")
         self.assertIn("nextcloud.marx.home {\n    tls internal", text)
 
+    def test_two_guests_sharing_ip_each_get_own_block(self):
+        asker, _, entries, text, _ = resolve(
+            [
+                make_guest("g1", "10.0.0.9", [8080], gid="201"),
+                make_guest("g2", "10.0.0.9", [9090], gid="202"),
+            ],
+            "",
+            ["", "n", "", "n"],
+        )
+        self.assertEqual(len(asker.prompts), 4)
+        self.assertEqual([entry.name for entry in entries], ["g1", "g2"])
+        self.assertIn("reverse_proxy 10.0.0.9:8080", text)
+        self.assertIn("reverse_proxy 10.0.0.9:9090", text)
+
+    def test_non_ascii_digit_port_falls_back_to_suggested(self):
+        _, logs, entries, _, _ = resolve(
+            [make_guest("jellyfin", "10.0.0.7", [8096], gid="107")],
+            "",
+            ["²", "n"],
+        )
+        self.assertEqual(entries[0].port, 8096)
+        self.assertTrue(any("Invalid port" in line for line in logs))
+
+    def test_saved_port_reused_when_guest_ip_changed(self):
+        asker, _, entries, text, _ = resolve(
+            [make_guest("jellyfin", "10.0.0.8", [9000], gid="107")],
+            "http://jellyfin.marx.home {\n"
+            "    reverse_proxy 10.0.0.7:8096\n"
+            "}\n",
+            [],
+        )
+        self.assertEqual(asker.prompts, [])
+        self.assertEqual(
+            entries, [core.Entry("jellyfin", "10.0.0.8", 8096, "http")]
+        )
+        self.assertIn("reverse_proxy 10.0.0.8:8096", text)
+
+    def test_saved_multi_service_plus_own_entry(self):
+        asker, _, entries, text, _ = resolve(
+            [make_guest("starr", "10.0.0.5", [1111, 2222])],
+            "http://svc1.marx.home {\n"
+            "    reverse_proxy 10.0.0.5:1111\n"
+            "}\n"
+            "\n"
+            "http://starr.marx.home {\n"
+            "    reverse_proxy 10.0.0.5:2222\n"
+            "}\n",
+            [],
+        )
+        self.assertEqual(asker.prompts, [])
+        self.assertEqual([entry.name for entry in entries], ["svc1", "starr"])
+        self.assertIn("reverse_proxy 10.0.0.5:1111", text)
+        self.assertIn("reverse_proxy 10.0.0.5:2222", text)
+
+    def test_multi_service_uses_port_suggestion_as_default(self):
+        asker, _, entries, text, _ = resolve(
+            [make_guest("starr", "10.0.0.5", [6767, 7878])],
+            "http://oldapp.marx.home {\n"
+            "    reverse_proxy 10.9.9.9:6767\n"
+            "}\n",
+            ["y", "", "svc2", "n"],
+        )
+        self.assertTrue(
+            any("[default: oldapp]" in prompt for prompt in asker.prompts)
+        )
+        self.assertEqual(
+            [(entry.name, entry.port, entry.ip) for entry in entries],
+            [("oldapp", 6767, "10.0.0.5"), ("svc2", 7878, "10.0.0.5")],
+        )
+        self.assertIn("reverse_proxy 10.0.0.5:6767", text)
+
+    def test_guest_without_detected_ports_defaults_to_80(self):
+        _, _, entries, text, _ = resolve(
+            [make_guest("jellyfin", "10.0.0.7", [], gid="107")], "", ["", "n"]
+        )
+        self.assertEqual(
+            entries, [core.Entry("jellyfin", "10.0.0.7", 80, "http")]
+        )
+        self.assertIn("reverse_proxy 10.0.0.7:80", text)
+
 
 class RenderTests(unittest.TestCase):
     def test_guest_entries_come_first_then_orphans(self):
@@ -344,7 +425,7 @@ class MainTests(unittest.TestCase):
         try:
             sys.argv = argv
             sys.stdin = stdin
-            with core.redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 status = core.main()
         finally:
             sys.argv, sys.stdin = old_argv, old_stdin
@@ -353,6 +434,10 @@ class MainTests(unittest.TestCase):
         self.assertIn("bazarr.marx.home", out)
         self.assertIn("reverse_proxy 10.0.0.5:6767", out)
         self.assertNotIn("starr.marx.home", out)
+        self.assertNotIn("Subdomain for", out)
+        self.assertNotIn("Does starr host", out)
+        self.assertNotIn("HTTPS (tls internal) for", out)
+        self.assertNotIn("Port for", out)
 
     def test_main_rejects_invalid_guests_file(self):
         old_argv = sys.argv
@@ -362,7 +447,7 @@ class MainTests(unittest.TestCase):
                 "--guests-file",
                 "/nonexistent/guests.json",
             ]
-            with core.redirect_stderr(io.StringIO()):
+            with redirect_stderr(io.StringIO()):
                 self.assertNotEqual(core.main(), 0)
         finally:
             sys.argv = old_argv
@@ -390,7 +475,88 @@ class MainTests(unittest.TestCase):
             sys.argv = ["generate_caddyfile_core.py", "--guests-file", guests_path]
             sys.stdin = io.StringIO("")
             stdout = io.StringIO()
-            with core.redirect_stdout(stdout):
+            with redirect_stdout(stdout):
+                status = core.main()
+        finally:
+            sys.argv, sys.stdin = old_argv, old_stdin
+        self.assertEqual(status, 0)
+        self.assertIn("reverse_proxy 10.0.0.7:8096", stdout.getvalue())
+
+    def test_main_loads_saved_file(self):
+        import json
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".local", delete=False) as handle:
+            handle.write(
+                "http://jellyfin.marx.home {\n"
+                "    reverse_proxy 10.0.0.7:8096\n"
+                "}\n"
+            )
+            saved_path = handle.name
+        self.addCleanup(os.unlink, saved_path)
+        guests = [
+            {
+                "name": "jellyfin",
+                "gid": "107",
+                "gtype": "ct",
+                "ip": "10.0.0.7",
+                "ports": [8096],
+            }
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(guests, handle)
+            guests_path = handle.name
+        self.addCleanup(os.unlink, guests_path)
+
+        old_argv, old_stdin = sys.argv, sys.stdin
+        try:
+            sys.argv = [
+                "generate_caddyfile_core.py",
+                "--saved-file",
+                saved_path,
+                "--guests-file",
+                guests_path,
+            ]
+            sys.stdin = io.StringIO("")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                status = core.main()
+        finally:
+            sys.argv, sys.stdin = old_argv, old_stdin
+        self.assertEqual(status, 0)
+        self.assertIn("reverse_proxy 10.0.0.7:8096", stdout.getvalue())
+        self.assertIn("saved port", stderr.getvalue())
+
+    def test_main_ignores_missing_saved_file(self):
+        import json
+        import tempfile
+
+        guests = [
+            {
+                "name": "jellyfin",
+                "gid": "107",
+                "gtype": "ct",
+                "ip": "10.0.0.7",
+                "ports": [8096],
+            }
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(guests, handle)
+            guests_path = handle.name
+        self.addCleanup(os.unlink, guests_path)
+
+        old_argv, old_stdin = sys.argv, sys.stdin
+        try:
+            sys.argv = [
+                "generate_caddyfile_core.py",
+                "--saved-file",
+                "/nonexistent/Caddyfile.local",
+                "--guests-file",
+                guests_path,
+            ]
+            sys.stdin = io.StringIO("\n\n")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
                 status = core.main()
         finally:
             sys.argv, sys.stdin = old_argv, old_stdin

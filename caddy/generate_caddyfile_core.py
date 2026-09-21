@@ -11,7 +11,6 @@ import json
 import os
 import re
 import sys
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -29,8 +28,6 @@ __all__ = [
     "resolve_guests",
     "render_caddyfile",
     "main",
-    "redirect_stdout",
-    "redirect_stderr",
 ]
 
 
@@ -65,7 +62,7 @@ def parse_saved_caddyfile(
     tls: Dict[str, str] = {}
     escaped = re.escape(domain)
     http_re = re.compile(r"http://([^.\s]+)\.%s\s*\{" % escaped)
-    plain_re = re.compile(r"([^.\s/:]+)\.%s\s*\{" % escaped)
+    https_re = re.compile(r"([^.\s/:]+)\.%s\s*\{" % escaped)
     proxy_re = re.compile(r"reverse_proxy\s+(\d+\.\d+\.\d+\.\d+):(\d+)")
     pending: Optional[str] = None
     for line in text.splitlines():
@@ -74,7 +71,7 @@ def parse_saved_caddyfile(
             pending = match.group(1)
             tls[pending] = "http"
             continue
-        match = plain_re.search(line)
+        match = https_re.search(line)
         if match:
             pending = match.group(1)
             tls[pending] = "https"
@@ -161,6 +158,7 @@ def resolve_guests(
     ask: Callable[[str], str],
     log: Callable[[str], None],
 ) -> Tuple[List[Entry], Dict[str, str]]:
+    saved = dict(routes)
     names: List[str] = []
     seen = set()
 
@@ -170,24 +168,25 @@ def resolve_guests(
             seen.add(name)
             names.append(name)
 
+    def reuse_saved_port(name: str, ip: str) -> None:
+        log("  \u2713 %s \u2192 saved port %d" % (name, saved[name].port))
+        add_entry(name, ip, saved[name].port)
+        prompt_tls(name, tls, domain, ask, log)
+
     for guest in guests:
         name = guest.name
         ip = guest.ip
-        saved_services = saved_services_for_ip(routes, ip, name)
+        saved_services = saved_services_for_ip(saved, ip, name)
         if saved_services:
             log("  \u2713 %s \u2192 saved multi-service:" % name)
             for svc in saved_services:
-                log("    \u2713 %s.%s \u2192 %s:%d" % (svc, domain, ip, routes[svc].port))
-                add_entry(svc, ip, routes[svc].port)
-            if name in routes:
-                log("  \u2713 %s \u2192 saved port %d" % (name, routes[name].port))
-                add_entry(name, ip, routes[name].port)
-                tls[name] = prompt_tls(name, tls, domain, ask, log)
+                log("    \u2713 %s.%s \u2192 %s:%d" % (svc, domain, ip, saved[svc].port))
+                add_entry(svc, ip, saved[svc].port)
+            if name in saved:
+                reuse_saved_port(name, ip)
             continue
-        if name in routes:
-            log("  \u2713 %s \u2192 saved port %d" % (name, routes[name].port))
-            add_entry(name, ip, routes[name].port)
-            tls[name] = prompt_tls(name, tls, domain, ask, log)
+        if name in saved:
+            reuse_saved_port(name, ip)
             continue
         ports = list(guest.ports)
         multi = False
@@ -198,8 +197,9 @@ def resolve_guests(
             ).strip().lower()
             multi = answer in ("y", "yes")
         if multi:
+            before = len(names)
             for port in ports:
-                suggestion = suggest_subdomain_for_port(routes, port)
+                suggestion = suggest_subdomain_for_port(saved, port)
                 if suggestion:
                     raw = ask(
                         "  Subdomain for %s port %d (%s) [default: %s]: "
@@ -214,10 +214,10 @@ def resolve_guests(
                 svc = sanitize_subdomain(raw)
                 if not svc:
                     continue
-                tls[svc] = prompt_tls(svc, tls, domain, ask, log)
+                prompt_tls(svc, tls, domain, ask, log)
                 add_entry(svc, ip, port)
                 log("  \u2713 %s.%s \u2192 %s:%d" % (svc, domain, ip, port))
-            if not any(routes[entry].ip == ip for entry in names):
+            if len(names) == before:
                 log(
                     "  No subdomain given for %s \u2014 falling back to single-service"
                     % name
@@ -228,13 +228,13 @@ def resolve_guests(
         raw_port = ask(
             "  Port for %s.%s (%s) [default: %d]: " % (name, domain, ip, suggested)
         ).strip() or str(suggested)
-        if not raw_port.isdigit():
+        if not re.match(r"^[0-9]+$", raw_port):
             log("  Invalid port '%s' \u2014 using %d" % (raw_port, suggested))
             port = suggested
         else:
             port = int(raw_port)
         add_entry(name, ip, port)
-        tls[name] = prompt_tls(name, tls, domain, ask, log)
+        prompt_tls(name, tls, domain, ask, log)
     entries = [
         Entry(entry, routes[entry].ip, routes[entry].port, tls.get(entry, "http"))
         for entry in names
@@ -279,8 +279,9 @@ def render_caddyfile(
 
 
 def read_prompt(prompt: str) -> str:
+    print(prompt, end="", file=sys.stderr, flush=True)
     try:
-        return input(prompt)
+        return input()
     except EOFError:
         return ""
 
