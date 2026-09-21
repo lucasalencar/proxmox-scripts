@@ -543,58 +543,59 @@ def read_seerr_api_key(settings_path: str = SEERR_SETTINGS_FILE,
          % (settings_path, last_error))
 
 
-def build_seerr_sonarr(api_key: str, profile_id: int, profile_name: str,
-                       root_folder: str) -> Dict[str, Any]:
+def _seerr_servarr_base(name: str, port: int, api_key: str) -> Dict[str, Any]:
     return {
-        "name": SEERR_SONARR_NAME,
+        "name": name,
         "hostname": "localhost",
-        "port": SONARR_PORT,
+        "port": port,
         "apiKey": api_key,
         "useSsl": False,
         "baseUrl": "",
+        "is4k": False,
+        "isDefault": True,
+        "syncEnabled": True,
+        "preventSearch": False,
+    }
+
+
+def build_seerr_sonarr(sonarr_api_key: str, profile_id: int,
+                       profile_name: str, root_folder: str) -> Dict[str, Any]:
+    payload = _seerr_servarr_base(SEERR_SONARR_NAME, SONARR_PORT,
+                                  sonarr_api_key)
+    payload.update({
         "activeProfileId": profile_id,
         "activeProfileName": profile_name,
         "activeDirectory": root_folder,
-        "is4k": False,
         "enableSeasonFolders": True,
-        "isDefault": True,
-        "syncEnabled": True,
-        "preventSearch": False,
-    }
+    })
+    return payload
 
 
-def build_seerr_radarr(api_key: str, profile_id: int, profile_name: str,
-                       root_folder: str) -> Dict[str, Any]:
-    return {
-        "name": SEERR_RADARR_NAME,
-        "hostname": "localhost",
-        "port": RADARR_PORT,
-        "apiKey": api_key,
-        "useSsl": False,
-        "baseUrl": "",
+def build_seerr_radarr(radarr_api_key: str, profile_id: int,
+                       profile_name: str, root_folder: str) -> Dict[str, Any]:
+    payload = _seerr_servarr_base(SEERR_RADARR_NAME, RADARR_PORT,
+                                  radarr_api_key)
+    payload.update({
         "activeProfileId": profile_id,
         "activeProfileName": profile_name,
         "activeDirectory": root_folder,
-        "is4k": False,
         "minimumAvailability": "released",
-        "isDefault": True,
-        "syncEnabled": True,
-        "preventSearch": False,
-    }
+    })
+    return payload
 
 
 def build_seerr_jellyfin(host: str, port: int,
-                         api_key: str) -> Dict[str, Any]:
+                         jellyfin_api_key: str) -> Dict[str, Any]:
     return {
         "ip": host,
         "port": port,
         "useSsl": False,
         "urlBase": "",
-        "apiKey": api_key,
+        "apiKey": jellyfin_api_key,
     }
 
 
-def match_seerr_service(name: str) -> Callable[[Dict[str, Any]], bool]:
+def seerr_service_named(name: str) -> Callable[[Dict[str, Any]], bool]:
     def match(item: Dict[str, Any]) -> bool:
         return item.get("name") == name
     return match
@@ -602,7 +603,7 @@ def match_seerr_service(name: str) -> Callable[[Dict[str, Any]], bool]:
 
 def plan_seerr_service(existing: List[Dict[str, Any]],
                        desired: Dict[str, Any]) -> str:
-    item = matching_item(match_seerr_service(desired["name"]), existing)
+    item = matching_item(seerr_service_named(desired["name"]), existing)
     if item is None:
         return "created"
     for key, value in desired.items():
@@ -627,7 +628,10 @@ def upsert_seerr_service(list_path: str, api_key: str,
     if action == "unchanged":
         log("Seerr %s already wired" % desired["name"])
         return "unchanged"
-    target = matching_item(match_seerr_service(desired["name"]), existing)
+    target = matching_item(seerr_service_named(desired["name"]), existing)
+    if "id" not in target:
+        fail("Seerr %s entry has no id; remove the duplicate in Seerr"
+             " Settings -> Services and re-run" % desired["name"])
     body = dict(desired)
     body["id"] = target["id"]
     seerr_request("PUT", "%s/%d" % (list_path, target["id"]), api_key, body)
@@ -653,6 +657,15 @@ def ensure_seerr_radarr(seerr_api_key: str, radarr_api_key: str,
                            root_folder), dry_run)
 
 
+def plan_seerr_jellyfin(current: Dict[str, Any], host: str, port: int,
+                        jellyfin_api_key: str) -> str:
+    desired = build_seerr_jellyfin(host, port, jellyfin_api_key)
+    for key, value in desired.items():
+        if not _secret_aware_equal(current.get(key), value):
+            return "updated"
+    return "unchanged"
+
+
 def ensure_seerr_jellyfin(seerr_api_key: str, host: str, port: int,
                           jellyfin_api_key: str, dry_run: bool) -> str:
     if not jellyfin_api_key:
@@ -660,6 +673,11 @@ def ensure_seerr_jellyfin(seerr_api_key: str, host: str, port: int,
             " wired; create a Jellyfin API key (Dashboard -> API Keys) and"
             " re-run with --jellyfin-api-key to link the media server")
         return "skipped_no_key"
+    current = seerr_request("GET", SEERR_JELLYFIN_PATH, seerr_api_key) or {}
+    action = plan_seerr_jellyfin(current, host, port, jellyfin_api_key)
+    if action == "unchanged":
+        log("Seerr Jellyfin already linked at %s:%d" % (host, port))
+        return "unchanged"
     if dry_run:
         log("[dry-run] would link Seerr to Jellyfin at %s:%d" % (host, port))
         return "would_configure"
@@ -693,6 +711,10 @@ def ensure_seerr(sonarr_key: str, radarr_key: str, jellyfin_host: str,
                  jellyfin_port: int, jellyfin_api_key: str,
                  dry_run: bool,
                  settings_path: str = SEERR_SETTINGS_FILE) -> str:
+    if not os.path.exists(settings_path):
+        log("Seerr is not installed in this container yet — run install.sh"
+            " (or update.sh) first, or pass --skip-seerr")
+        return "unavailable"
     seerr_api_key = read_seerr_api_key(settings_path)
     try:
         public = seerr_request("GET", SEERR_PUBLIC_PATH, seerr_api_key) or {}
@@ -706,18 +728,24 @@ def ensure_seerr(sonarr_key: str, radarr_key: str, jellyfin_host: str,
             % SEERR_BASE)
         return "needs_setup"
 
-    sonarr_profile = pick_servarr_profile(SONARR_BASE, sonarr_key, "Sonarr")
+    sonarr_profile_id, sonarr_profile_name = pick_servarr_profile(
+        SONARR_BASE, sonarr_key, "Sonarr")
     sonarr_root = pick_servarr_root(SONARR_BASE, sonarr_key, SONARR_ROOT,
                                     "Sonarr")
-    radarr_profile = pick_servarr_profile(RADARR_BASE, radarr_key, "Radarr")
+    log("Seerr Sonarr: profile '%s' (%d), root '%s'"
+        % (sonarr_profile_name, sonarr_profile_id, sonarr_root))
+    radarr_profile_id, radarr_profile_name = pick_servarr_profile(
+        RADARR_BASE, radarr_key, "Radarr")
     radarr_root = pick_servarr_root(RADARR_BASE, radarr_key, RADARR_ROOT,
                                     "Radarr")
+    log("Seerr Radarr: profile '%s' (%d), root '%s'"
+        % (radarr_profile_name, radarr_profile_id, radarr_root))
 
     actions = [
-        ensure_seerr_sonarr(seerr_api_key, sonarr_key, sonarr_profile[0],
-                            sonarr_profile[1], sonarr_root, dry_run),
-        ensure_seerr_radarr(seerr_api_key, radarr_key, radarr_profile[0],
-                            radarr_profile[1], radarr_root, dry_run),
+        ensure_seerr_sonarr(seerr_api_key, sonarr_key, sonarr_profile_id,
+                            sonarr_profile_name, sonarr_root, dry_run),
+        ensure_seerr_radarr(seerr_api_key, radarr_key, radarr_profile_id,
+                            radarr_profile_name, radarr_root, dry_run),
         ensure_seerr_jellyfin(seerr_api_key, jellyfin_host, jellyfin_port,
                               jellyfin_api_key, dry_run),
     ]
@@ -1173,7 +1201,7 @@ def valid_host(value: str) -> str:
     try:
         ipaddress.ip_address(host)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("qBittorrent host must be an IP address") from exc
+        raise argparse.ArgumentTypeError("host must be an IP address") from exc
     return host
 
 

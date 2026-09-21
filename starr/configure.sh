@@ -213,8 +213,9 @@ fi
 [ "$SKIP_BAZARR" -eq 1 ] && extra_args+=(--skip-bazarr)
 [ "$SKIP_FLARESOLVERR" -eq 1 ] && extra_args+=(--skip-flaresolverr)
 [ "$SKIP_SEERR" -eq 1 ] && extra_args+=(--skip-seerr)
-if [ "$SKIP_SEERR" -eq 0 ] && [ -n "$JELLYFIN_HOST" ]; then
-    extra_args+=(--jellyfin-host "$JELLYFIN_HOST" --jellyfin-port "$JELLYFIN_PORT")
+if [ "$SKIP_SEERR" -eq 0 ]; then
+    [ -n "$JELLYFIN_HOST" ] && extra_args+=(--jellyfin-host "$JELLYFIN_HOST")
+    extra_args+=(--jellyfin-port "$JELLYFIN_PORT")
 fi
 [ "$DRY_RUN" -eq 1 ] && extra_args+=(--dry-run)
 
@@ -222,11 +223,11 @@ AUTH_REMOTE="/root/starr-auth-$$.env"
 AUTH_LOCAL=""
 SEERR_REMOTE="/root/starr-seerr-$$.env"
 SEERR_LOCAL=""
-cleanup_auth() {
+cleanup_secrets() {
     [ -n "$AUTH_LOCAL" ] && rm -f "$AUTH_LOCAL"
     [ -n "$SEERR_LOCAL" ] && rm -f "$SEERR_LOCAL"
 }
-trap cleanup_auth EXIT
+trap cleanup_secrets EXIT
 if [ "$SKIP_AUTH" -eq 0 ]; then
     AUTH_LOCAL="$(mktemp)" || { log_error "Failed to create temp auth file."; exit 1; }
     chmod 600 "$AUTH_LOCAL"
@@ -277,8 +278,10 @@ else
     printf '%s\n' "$QBIT_PASS" | pct exec "$starr_id" -- python3 "$REMOTE" "${extra_args[@]}"
     pct_status=${PIPESTATUS[1]}
 fi
-# Remove remote secrets regardless of outcome
-[ "$SKIP_AUTH" -eq 0 ] && pct exec "$starr_id" -- rm -f "$AUTH_REMOTE" "$REMOTE" >/dev/null 2>&1 || true
+# Remove remote files regardless of outcome (the pushed script always,
+# the secret files only when they were pushed)
+pct exec "$starr_id" -- rm -f "$REMOTE" >/dev/null 2>&1 || true
+[ "$SKIP_AUTH" -eq 0 ] && pct exec "$starr_id" -- rm -f "$AUTH_REMOTE" >/dev/null 2>&1 || true
 [ -n "$SEERR_LOCAL" ] && pct exec "$starr_id" -- rm -f "$SEERR_REMOTE" >/dev/null 2>&1 || true
 if [ "$pct_status" -ne 0 ]; then
     log_error "Starr configure failed inside container $starr_id"

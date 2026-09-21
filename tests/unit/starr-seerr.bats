@@ -44,7 +44,17 @@ teardown() {
 @test "starr container update.sh refreshes Seerr" {
   /usr/bin/grep -q "/opt/seerr" "$REPO_ROOT/starr/container/update.sh"
   /usr/bin/grep -q "seerr" "$REPO_ROOT/starr/container/update.sh"
+  /usr/bin/grep -q "already current" "$REPO_ROOT/starr/container/update.sh"
+  /usr/bin/grep -q "systemctl restart seerr" "$REPO_ROOT/starr/container/update.sh"
   run bash -n "$REPO_ROOT/starr/container/update.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "starr container provision.sh guards pnpm and rate-limits Seerr restarts" {
+  /usr/bin/grep -q "pnpm could not be installed" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q "RestartSec=5" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q "SyslogIdentifier=seerr" "$REPO_ROOT/starr/container/provision.sh"
+  run bash -n "$REPO_ROOT/starr/container/provision.sh"
   [ "$status" -eq 0 ]
 }
 
@@ -99,6 +109,7 @@ teardown() {
   [ "$status" -eq 0 ]
   /usr/bin/grep -q "192.168.31.99" "$MOCK_LOG"
   /usr/bin/grep -q -- "--jellyfin-host" "$MOCK_LOG"
+  /usr/bin/grep -q -- "--jellyfin-port 8096" "$MOCK_LOG"
   ! /usr/bin/grep -q "jelly-secret-1" "$MOCK_LOG"
   [[ "$output" != *"jelly-secret-1"* ]]
 }

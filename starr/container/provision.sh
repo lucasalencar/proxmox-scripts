@@ -320,18 +320,25 @@ install_seerr() {
         log "Enabling pnpm via corepack..."
         corepack enable 2>/dev/null || npm install -g pnpm 2>/dev/null || true
     fi
+    if ! command -v pnpm >/dev/null 2>&1; then
+        log "ERROR: pnpm could not be installed — cannot build Seerr"
+        return 1
+    fi
 
     if [ ! -d /opt/seerr ]; then
         log "Cloning seerr-team/seerr..."
         git clone https://github.com/seerr-team/seerr.git /opt/seerr
     fi
-    cd /opt/seerr
 
     log "Building Seerr (this may take several minutes)..."
-    export CYPRESS_INSTALL_BINARY=0
-    pnpm install --frozen-lockfile
-    export NODE_OPTIONS="--max-old-space-size=3072"
-    pnpm build
+    # Subshell: the build must not leak CWD or NODE_OPTIONS into later steps
+    (
+        cd /opt/seerr
+        export CYPRESS_INSTALL_BINARY=0
+        pnpm install --frozen-lockfile
+        export NODE_OPTIONS="--max-old-space-size=3072"
+        pnpm build
+    )
 
     mkdir -p /etc/seerr
     if [ ! -f /etc/seerr/seerr.conf ]; then
@@ -349,8 +356,10 @@ EnvironmentFile=/etc/seerr/seerr.conf
 Environment=NODE_ENV=production
 Type=exec
 Restart=on-failure
+RestartSec=5
 WorkingDirectory=/opt/seerr
 ExecStart=/usr/bin/node dist/index.js
+SyslogIdentifier=seerr
 
 [Install]
 WantedBy=multi-user.target

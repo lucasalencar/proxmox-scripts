@@ -107,36 +107,44 @@ else
     log "flaresolverr not installed — skipping"
 fi
 
-# Seerr: pull latest source, rebuild, restart (config dir is preserved)
+# Seerr: rebuild only when the checkout actually advances; the service
+# stays up otherwise (config dir is preserved across rebuilds)
 if [ -d /opt/seerr ] || [ -f /etc/systemd/system/seerr.service ]; then
     log "Refreshing seerr..."
-    refreshed=0
-    if [ -d /opt/seerr/.git ]; then
-        systemctl stop seerr 2>/dev/null || true
-        if git -C /opt/seerr pull --ff-only 2>/dev/null; then
-            cd /opt/seerr
-            export CYPRESS_INSTALL_BINARY=0
-            if pnpm install --frozen-lockfile 2>/dev/null; then
-                export NODE_OPTIONS="--max-old-space-size=3072"
-                if pnpm build 2>/dev/null; then
-                    refreshed=1
-                fi
-            fi
-        else
-            log "  git pull failed — keeping the installed version"
-        fi
-        if ! systemctl restart seerr 2>/dev/null; then
-            systemctl start seerr 2>/dev/null || true
-        fi
-    else
+    if [ ! -d /opt/seerr/.git ]; then
         log "  /opt/seerr has no git checkout — keeping the installed version"
+    else
+        pull_output=$(git -C /opt/seerr pull --ff-only 2>&1) && pull_ok=1 || pull_ok=0
+        if [ "$pull_ok" -eq 0 ]; then
+            log "  git pull failed — keeping the installed version"
+            echo "$pull_output" | head -3 | while IFS= read -r line; do
+                log "  $line"
+            done
+        elif echo "$pull_output" | grep -qi "already up to date"; then
+            log "  seerr already current — no restart needed"
+        else
+            systemctl stop seerr 2>/dev/null || true
+            (
+                cd /opt/seerr
+                export CYPRESS_INSTALL_BINARY=0
+                pnpm install --frozen-lockfile
+                export NODE_OPTIONS="--max-old-space-size=3072"
+                pnpm build
+            ) && refreshed=1 || refreshed=0
+            if [ "$refreshed" -eq 1 ]; then
+                log "  seerr rebuilt from latest source"
+            else
+                log "  seerr rebuild failed — restarting previous install"
+            fi
+            if ! systemctl restart seerr 2>/dev/null; then
+                systemctl start seerr 2>/dev/null || true
+            fi
+        fi
     fi
     if systemctl is-active --quiet seerr; then
         log "  seerr: active"
-    elif [ "$refreshed" -eq 1 ]; then
-        log "  seerr: not active after restart"
     else
-        log "  seerr: untouched (still on the previous version)"
+        log "  seerr: not active after refresh"
     fi
 else
     log "seerr not installed — skipping"

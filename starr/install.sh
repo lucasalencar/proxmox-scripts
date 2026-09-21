@@ -11,7 +11,7 @@ log_step "Starting Starr stack installation (Prowlarr + Sonarr + Radarr + Bazarr
 container_id=$(get_exact_container_id_by_name "starr")
 
 if [ -z "$container_id" ]; then
-    # Single CT runs 4 apps — resources are shared
+    # Single CT runs 5 apps — resources are shared
     CT_CORES=4
     CT_MEMORY=4096
     CT_DISK=20
