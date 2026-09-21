@@ -7,7 +7,7 @@ test: test-python
 test-python:
 	@python3 caddy/test_generate_caddyfile_core.py
 
-test-verbose:
+test-verbose: test-python
 	@BATS_WARN_BW01=0 BATS_WARN_BW02=0 bats --verbose-run tests/unit
 
 lint:

@@ -300,7 +300,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Resolve guest entries and render a Caddyfile."
     )
-    parser.add_argument("--domain", default="marx.home")
+    parser.add_argument("--domain", required=True)
     parser.add_argument("--saved-file", default=None)
     parser.add_argument("--guests-file", required=True)
     args = parser.parse_args(argv)

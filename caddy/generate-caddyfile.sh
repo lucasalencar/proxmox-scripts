@@ -121,7 +121,7 @@ resolve_real_python3() {
     local found candidate
     found=$(command -v python3 2>/dev/null || true)
     case "$found" in
-        ""|*/mocks) ;;
+        ""|*mocks*) ;;
         *)
             printf '%s\n' "$found"
             return 0
@@ -178,7 +178,7 @@ if ! "$REAL_PYTHON3" "$CORE_SCRIPT" --domain "$DOMAIN" --saved-file "$LOCAL_CADD
     log_error "Failed to resolve Caddy entries."
     exit 1
 fi
-mv "$TMP_CADDYFILE" "$LOCAL_CADDYFILE"
+cat "$TMP_CADDYFILE" > "$LOCAL_CADDYFILE"
 
 cat "$LOCAL_CADDYFILE"
 

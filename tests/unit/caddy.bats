@@ -117,6 +117,12 @@ teardown() {
   /usr/bin/grep -q "reverse_proxy 10.0.0.5:9696" "$REPO_ROOT/caddy/Caddyfile.local"
   # Multi-mode must not also emit a single starr block
   ! /usr/bin/grep -q "starr.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+  # Stdout must stay pure: core prompts/logs go to stderr, never into the file
+  ! /usr/bin/grep -q "Subdomain for" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "Does starr host" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "HTTPS (tls internal) for" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "Loading existing" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "✓" "$REPO_ROOT/caddy/Caddyfile.local"
   /usr/bin/grep -q "pct push 100" "$MOCK_LOG"
   /usr/bin/grep -q "pct exec 100" "$MOCK_LOG"
 
@@ -198,6 +204,9 @@ EOF
   /usr/bin/grep -q "reverse_proxy 10.0.0.5:8989" "$REPO_ROOT/caddy/Caddyfile.local"
   /usr/bin/grep -q "myapp.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
   /usr/bin/grep -q "reverse_proxy 10.9.9.9:1234" "$REPO_ROOT/caddy/Caddyfile.local"
+  # Preserved blocks keep no log lines in the file either
+  ! /usr/bin/grep -q "Preserving unmanaged" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "Port for" "$REPO_ROOT/caddy/Caddyfile.local"
 
   if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
     cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"

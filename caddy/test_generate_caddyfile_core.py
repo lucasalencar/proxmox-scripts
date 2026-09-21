@@ -374,6 +374,10 @@ class ResolveTests(unittest.TestCase):
             ["", "n", "y", "g1", "svc", "n"],
         )
         self.assertEqual([entry.name for entry in entries], ["g1", "svc"])
+        self.assertEqual(
+            [(entry.name, entry.ip, entry.port) for entry in entries],
+            [("g1", "10.0.0.6", 9090), ("svc", "10.0.0.6", 9091)],
+        )
         self.assertNotIn("g2.marx.home", text)
         self.assertFalse(any("falling back" in line for line in logs))
 
@@ -488,13 +492,45 @@ class MainTests(unittest.TestCase):
         try:
             sys.argv = [
                 "generate_caddyfile_core.py",
+                "--domain",
+                DOMAIN,
                 "--guests-file",
                 "/nonexistent/guests.json",
             ]
-            with redirect_stderr(io.StringIO()):
-                self.assertNotEqual(core.main(), 0)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(core.main(), 1)
         finally:
             sys.argv = old_argv
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("Error", stderr.getvalue())
+
+    def test_main_rejects_malformed_guests_file(self):
+        import tempfile
+
+        for content in ("{not json", '[{"name": "x"}]'):
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", delete=False
+            ) as handle:
+                handle.write(content)
+                guests_path = handle.name
+            self.addCleanup(os.unlink, guests_path)
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "generate_caddyfile_core.py",
+                    "--domain",
+                    DOMAIN,
+                    "--guests-file",
+                    guests_path,
+                ]
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    self.assertEqual(core.main(), 1)
+            finally:
+                sys.argv = old_argv
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("Error", stderr.getvalue())
 
     def test_main_treats_eof_as_empty_answer(self):
         import json
@@ -516,7 +552,13 @@ class MainTests(unittest.TestCase):
 
         old_argv, old_stdin = sys.argv, sys.stdin
         try:
-            sys.argv = ["generate_caddyfile_core.py", "--guests-file", guests_path]
+            sys.argv = [
+                "generate_caddyfile_core.py",
+                "--domain",
+                DOMAIN,
+                "--guests-file",
+                guests_path,
+            ]
             sys.stdin = io.StringIO("")
             stdout = io.StringIO()
             with redirect_stdout(stdout):
@@ -556,6 +598,8 @@ class MainTests(unittest.TestCase):
         try:
             sys.argv = [
                 "generate_caddyfile_core.py",
+                "--domain",
+                DOMAIN,
                 "--saved-file",
                 saved_path,
                 "--guests-file",
@@ -593,6 +637,8 @@ class MainTests(unittest.TestCase):
         try:
             sys.argv = [
                 "generate_caddyfile_core.py",
+                "--domain",
+                DOMAIN,
                 "--saved-file",
                 "/nonexistent/Caddyfile.local",
                 "--guests-file",
