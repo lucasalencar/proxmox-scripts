@@ -504,6 +504,272 @@ def ensure_flaresolverr(api_key: str, dry_run: bool) -> str:
     return "configured"
 
 
+# --- Seerr (Jellyfin request manager, same CT, port 5055) ---
+
+SEERR_BASE = "http://localhost:5055"
+SEERR_PUBLIC_PATH = "/api/v1/settings/public"
+SEERR_SONARR_PATH = "/api/v1/settings/sonarr"
+SEERR_RADARR_PATH = "/api/v1/settings/radarr"
+SEERR_JELLYFIN_PATH = "/api/v1/settings/jellyfin"
+SEERR_SETTINGS_FILE = "/opt/seerr/config/settings.json"
+SEERR_SONARR_NAME = "Sonarr"
+SEERR_RADARR_NAME = "Radarr"
+JELLYFIN_DEFAULT_PORT = 8096
+
+
+def seerr_request(method: str, path: str, api_key: str,
+                  body: Optional[Dict[str, Any]] = None) -> Any:
+    return api_request(method, SEERR_BASE, "X-Api-Key", api_key, path, body)
+
+
+def read_seerr_api_key(settings_path: str = SEERR_SETTINGS_FILE,
+                       timeout: int = 60) -> str:
+    """Poll the Seerr settings file for main.apiKey; "" when it never appears.
+
+    Empty means Seerr has not finished its first boot — the caller reports
+    needs_setup instead of failing, so the rest of the run still applies.
+    """
+    deadline = time.time() + timeout
+    last_error = "file not found"
+    while time.time() < deadline:
+        try:
+            with open(settings_path, encoding="utf-8") as handle:
+                doc = json.load(handle)
+            api_key = ((doc.get("main") or {}).get("apiKey") or "").strip()
+            if api_key:
+                return api_key
+            last_error = "main.apiKey is empty"
+        except OSError as exc:
+            last_error = str(exc)
+        except ValueError as exc:
+            last_error = "unparseable JSON: %s" % exc
+        time.sleep(2)
+    log("WARNING: timed out waiting for Seerr API key in %s: %s"
+        % (settings_path, last_error))
+    return ""
+
+
+def _seerr_servarr_base(name: str, port: int, api_key: str) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "hostname": "localhost",
+        "port": port,
+        "apiKey": api_key,
+        "useSsl": False,
+        "baseUrl": "",
+        "is4k": False,
+        "isDefault": True,
+        "syncEnabled": True,
+        "preventSearch": False,
+    }
+
+
+def build_seerr_sonarr(sonarr_api_key: str, profile_id: int,
+                       profile_name: str, root_folder: str) -> Dict[str, Any]:
+    payload = _seerr_servarr_base(SEERR_SONARR_NAME, SONARR_PORT,
+                                  sonarr_api_key)
+    payload.update({
+        "activeProfileId": profile_id,
+        "activeProfileName": profile_name,
+        "activeDirectory": root_folder,
+        "enableSeasonFolders": True,
+    })
+    return payload
+
+
+def build_seerr_radarr(radarr_api_key: str, profile_id: int,
+                       profile_name: str, root_folder: str) -> Dict[str, Any]:
+    payload = _seerr_servarr_base(SEERR_RADARR_NAME, RADARR_PORT,
+                                  radarr_api_key)
+    payload.update({
+        "activeProfileId": profile_id,
+        "activeProfileName": profile_name,
+        "activeDirectory": root_folder,
+        "minimumAvailability": "released",
+    })
+    return payload
+
+
+def build_seerr_jellyfin(host: str, port: int,
+                         jellyfin_api_key: str) -> Dict[str, Any]:
+    return {
+        "ip": host,
+        "port": port,
+        "useSsl": False,
+        "urlBase": "",
+        "apiKey": jellyfin_api_key,
+    }
+
+
+def seerr_service_named(name: str) -> Callable[[Dict[str, Any]], bool]:
+    def match(item: Dict[str, Any]) -> bool:
+        return item.get("name") == name
+    return match
+
+
+def plan_seerr_service(existing: List[Dict[str, Any]],
+                       desired: Dict[str, Any]) -> str:
+    item = matching_item(seerr_service_named(desired["name"]), existing)
+    if item is None:
+        return "created"
+    for key, value in desired.items():
+        if key == "id":
+            continue
+        if not _secret_aware_equal(item.get(key), value):
+            return "updated"
+    return "unchanged"
+
+
+def upsert_seerr_service(list_path: str, api_key: str,
+                         desired: Dict[str, Any],
+                         dry_run: bool) -> str:
+    existing = seerr_request("GET", list_path, api_key) or []
+    action = plan_seerr_service(existing, desired)
+    if dry_run:
+        return "would_configure" if action != "unchanged" else "unchanged"
+    if action == "created":
+        seerr_request("POST", list_path, api_key, desired)
+        log("Seerr %s: created" % desired["name"])
+        return "created"
+    if action == "unchanged":
+        log("Seerr %s already wired" % desired["name"])
+        return "unchanged"
+    target = matching_item(seerr_service_named(desired["name"]), existing)
+    if "id" not in target:
+        fail("Seerr %s entry has no id; remove the duplicate in Seerr"
+             " Settings -> Services and re-run" % desired["name"])
+    body = dict(target)
+    body.update(desired)
+    body["id"] = target["id"]
+    seerr_request("PUT", "%s/%d" % (list_path, target["id"]), api_key, body)
+    log("Seerr %s: updated" % desired["name"])
+    return "updated"
+
+
+def ensure_seerr_sonarr(seerr_api_key: str, sonarr_api_key: str,
+                        profile_id: int, profile_name: str,
+                        root_folder: str, dry_run: bool) -> str:
+    return upsert_seerr_service(
+        SEERR_SONARR_PATH, seerr_api_key,
+        build_seerr_sonarr(sonarr_api_key, profile_id, profile_name,
+                           root_folder), dry_run)
+
+
+def ensure_seerr_radarr(seerr_api_key: str, radarr_api_key: str,
+                        profile_id: int, profile_name: str,
+                        root_folder: str, dry_run: bool) -> str:
+    return upsert_seerr_service(
+        SEERR_RADARR_PATH, seerr_api_key,
+        build_seerr_radarr(radarr_api_key, profile_id, profile_name,
+                           root_folder), dry_run)
+
+
+def plan_seerr_jellyfin(current: Dict[str, Any], host: str, port: int,
+                        jellyfin_api_key: str) -> str:
+    desired = build_seerr_jellyfin(host, port, jellyfin_api_key)
+    for key, value in desired.items():
+        if not _secret_aware_equal(current.get(key), value):
+            return "updated"
+    return "unchanged"
+
+
+def ensure_seerr_jellyfin(seerr_api_key: str, host: str, port: int,
+                          jellyfin_api_key: str, dry_run: bool) -> str:
+    if not jellyfin_api_key:
+        log("Seerr Jellyfin: no API key provided — Sonarr/Radarr are still"
+            " wired; create a Jellyfin API key (Dashboard -> API Keys) and"
+            " re-run with --jellyfin-api-key to link the media server")
+        return "skipped_no_key"
+    current = seerr_request("GET", SEERR_JELLYFIN_PATH, seerr_api_key) or {}
+    action = plan_seerr_jellyfin(current, host, port, jellyfin_api_key)
+    if action == "unchanged":
+        log("Seerr Jellyfin already linked at %s:%d" % (host, port))
+        return "unchanged"
+    if dry_run:
+        log("[dry-run] would link Seerr to Jellyfin at %s:%d" % (host, port))
+        return "would_configure"
+    seerr_request("POST", SEERR_JELLYFIN_PATH, seerr_api_key,
+                  build_seerr_jellyfin(host, port, jellyfin_api_key))
+    log("Seerr linked to Jellyfin at %s:%d" % (host, port))
+    return "configured"
+
+
+def pick_servarr_profile(base: str, api_key: str, kind: str) -> Tuple[int, str]:
+    profiles = servarr_request("GET", base, api_key,
+                               "/api/v3/qualityprofile") or []
+    if not profiles:
+        fail("no quality profiles found in %s; create one before wiring Seerr"
+             % kind)
+    first = profiles[0]
+    return first.get("id", 1), first.get("name", "")
+
+
+def pick_servarr_root(base: str, api_key: str, fallback: str,
+                      kind: str) -> str:
+    folders = servarr_request("GET", base, api_key, "/api/v3/rootfolder") or []
+    for folder in folders:
+        if folder.get("accessible", True):
+            return folder.get("path") or fallback
+    log("no accessible root folder in %s — using %s" % (kind, fallback))
+    return fallback
+
+
+def ensure_seerr(sonarr_key: str, radarr_key: str, jellyfin_host: str,
+                 jellyfin_port: int, jellyfin_api_key: str,
+                 dry_run: bool,
+                 settings_path: str = SEERR_SETTINGS_FILE,
+                 key_timeout: int = 60) -> str:
+    if not os.path.exists(settings_path):
+        log("Seerr is not installed in this container yet — run install.sh"
+            " (or update.sh) first, or pass --skip-seerr")
+        return "unavailable"
+    seerr_api_key = read_seerr_api_key(settings_path, key_timeout)
+    if not seerr_api_key:
+        log("Seerr has no API key yet — finish the setup wizard at %s,"
+            " then re-run to wire Sonarr/Radarr/Jellyfin" % SEERR_BASE)
+        return "needs_setup"
+    try:
+        public = seerr_request("GET", SEERR_PUBLIC_PATH, seerr_api_key) or {}
+    except ApiError:
+        log("Seerr is not answering on %s — skipping its setup"
+            % SEERR_BASE)
+        return "unavailable"
+    if not public.get("initialized", False):
+        log("Seerr setup wizard is not finished — open %s, sign in with"
+            " Jellyfin, then re-run to wire Sonarr/Radarr/Jellyfin"
+            % SEERR_BASE)
+        return "needs_setup"
+
+    sonarr_profile_id, sonarr_profile_name = pick_servarr_profile(
+        SONARR_BASE, sonarr_key, "Sonarr")
+    sonarr_root = pick_servarr_root(SONARR_BASE, sonarr_key, SONARR_ROOT,
+                                    "Sonarr")
+    log("Seerr Sonarr: profile '%s' (%d), root '%s'"
+        % (sonarr_profile_name, sonarr_profile_id, sonarr_root))
+    radarr_profile_id, radarr_profile_name = pick_servarr_profile(
+        RADARR_BASE, radarr_key, "Radarr")
+    radarr_root = pick_servarr_root(RADARR_BASE, radarr_key, RADARR_ROOT,
+                                    "Radarr")
+    log("Seerr Radarr: profile '%s' (%d), root '%s'"
+        % (radarr_profile_name, radarr_profile_id, radarr_root))
+
+    actions = [
+        ensure_seerr_sonarr(seerr_api_key, sonarr_key, sonarr_profile_id,
+                            sonarr_profile_name, sonarr_root, dry_run),
+        ensure_seerr_radarr(seerr_api_key, radarr_key, radarr_profile_id,
+                            radarr_profile_name, radarr_root, dry_run),
+        ensure_seerr_jellyfin(seerr_api_key, jellyfin_host, jellyfin_port,
+                              jellyfin_api_key, dry_run),
+    ]
+    if any(action in ("created", "updated", "configured") for action in actions):
+        return "configured"
+    if any(action == "would_configure" for action in actions):
+        return "would_configure"
+    if "skipped_no_key" in actions:
+        return "no_jellyfin_key"
+    return "unchanged"
+
+
 def build_qbit_login_request(host: str, port: int, username: str,
                              password: str) -> urllib.request.Request:
     url_host = "[%s]" % host if ":" in host and not host.startswith("[") else host
@@ -916,7 +1182,8 @@ def build_summary(versions: Dict[str, str], apps: Dict[str, int],
                   bazarr_action: str, dry_run: bool,
                   auth: Optional[Dict[str, str]] = None,
                   flaresolverr_action: str = "skipped",
-                  qbit_action: str = "skipped") -> Dict[str, Any]:
+                  qbit_action: str = "skipped",
+                  seerr_action: str = "skipped") -> Dict[str, Any]:
     return {
         "dry_run": dry_run,
         "versions": versions,
@@ -927,6 +1194,7 @@ def build_summary(versions: Dict[str, str], apps: Dict[str, int],
         "auth": auth or {},
         "flaresolverr": flaresolverr_action,
         "qbit": qbit_action,
+        "seerr": seerr_action,
     }
 
 
@@ -945,7 +1213,7 @@ def valid_host(value: str) -> str:
     try:
         ipaddress.ip_address(host)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("qBittorrent host must be an IP address") from exc
+        raise argparse.ArgumentTypeError("host must be an IP address") from exc
     return host
 
 
@@ -963,6 +1231,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--skip-bazarr", action="store_true")
     parser.add_argument("--skip-flaresolverr", action="store_true")
     parser.add_argument("--skip-qbit", action="store_true")
+    parser.add_argument("--skip-seerr", action="store_true")
+    parser.add_argument("--jellyfin-host", type=valid_host, required=False,
+                        default=None)
+    parser.add_argument("--jellyfin-port", type=valid_port,
+                        default=JELLYFIN_DEFAULT_PORT)
+    parser.add_argument("--seerr-env", default=None)
+    parser.add_argument("--seerr-settings", default=SEERR_SETTINGS_FILE)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
@@ -1023,6 +1298,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.skip_flaresolverr:
         flaresolverr_action = ensure_flaresolverr(prowlarr_key, args.dry_run)
 
+    seerr_action = "skipped"
+    if not args.skip_seerr:
+        jellyfin_api_key = ""
+        if args.seerr_env:
+            jellyfin_api_key = parse_auth_file(args.seerr_env).get(
+                "jellyfin_api_key", "")
+        seerr_action = ensure_seerr(sonarr_key, radarr_key,
+                                    args.jellyfin_host or LOCALHOST_IP,
+                                    args.jellyfin_port, jellyfin_api_key,
+                                    args.dry_run, args.seerr_settings)
+
     auth: Dict[str, str] = {}
     if args.skip_auth:
         auth = {app: "skipped" for app in ("prowlarr", "sonarr", "radarr", "bazarr")}
@@ -1053,7 +1339,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             bazarr_api_key, creds["bazarr_user"], creds["bazarr_pass"],
             bazarr_type, args.dry_run)
 
-    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth, flaresolverr_action, qbit_action)))
+    print(json.dumps(build_summary(versions, apps, clients, folders, bazarr_action, args.dry_run, auth, flaresolverr_action, qbit_action, seerr_action)))
     return 0
 
 

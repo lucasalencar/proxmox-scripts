@@ -1,6 +1,6 @@
 # Starr Stack
 
-Single LXC container bundling all Servarr apps: **Prowlarr + Sonarr + Radarr + Bazarr** (Core set). Managed as one unit to save RAM/disk and guarantee hardlinks via a single ZFS dataset.
+Single LXC container bundling all Servarr apps: **Prowlarr + Sonarr + Radarr + Bazarr + Seerr** (Core set). Managed as one unit to save RAM/disk and guarantee hardlinks via a single ZFS dataset.
 
 This implements [TRaSH Guides — Getting Started Step 3](https://trash-guides.info/Getting-Started/#3-set-up-your-official-arr-apps) without creating 4 separate LXCs.
 
@@ -44,11 +44,21 @@ defaults; missing passwords are generated and printed once in the log for your
 password manager. See `starr/configure.sh --help` for options.
 
 Each integration can be left untouched: `--skip-qbit`, `--skip-auth`,
-`--skip-bazarr`, `--skip-flaresolverr`. To add just one thing to an existing
-stack, combine them — for example, wiring only FlareSolverr:
+`--skip-bazarr`, `--skip-flaresolverr`, `--skip-seerr`. To add just one thing to an existing
+stack, combine them — for example, wiring only Seerr (Sonarr/Radarr/Jellyfin links;
+other services are only reconciled idempotently, never reconfigured):
 
 ```bash
-bash starr/configure.sh --skip-qbit --skip-auth
+bash starr/configure.sh --skip-qbit --skip-auth --skip-bazarr --skip-flaresolverr
+```
+
+Seerr needs a Jellyfin API key to link the media server; pass it explicitly
+(or via `JELLYFIN_API_KEY`) — without it, Sonarr/Radarr are still wired and
+Jellyfin is left for the Seerr web wizard:
+
+```bash
+bash starr/configure.sh --skip-qbit --skip-auth --skip-bazarr --skip-flaresolverr \
+  --jellyfin-api-key '...'
 ```
 
 ## Ports & Caddy
@@ -59,9 +69,10 @@ bash starr/configure.sh --skip-qbit --skip-auth
 | Sonarr | 8989 | `sonarr.marx.home` |
 | Radarr | 7878 | `radarr.marx.home` |
 | Bazarr | 6767 | `bazarr.marx.home` |
+| Seerr | 5055 | `seerr.marx.home` |
 | FlareSolverr | 8191 | none — loopback only (`127.0.0.1`) |
 
-Single CT = single IP, 4 public ports. `caddy/generate-caddyfile.sh` detects all listening ports and prompts for one subdomain per port — answer yes to multi-service for `starr`.
+Single CT = single IP, 5 public ports. `caddy/generate-caddyfile.sh` detects all listening ports and prompts for one subdomain per port — answer yes to multi-service for `starr`.
 
 FlareSolverr is deliberately bound to `127.0.0.1`: only Prowlarr (same CT) talks to it, so it must **not** get a Caddy entry and is never exposed on the LAN.
 
@@ -83,6 +94,10 @@ radarr.marx.home {
 bazarr.marx.home {
     tls internal
     reverse_proxy <IP>:6767
+}
+seerr.marx.home {
+    tls internal
+    reverse_proxy <IP>:5055
 }
 ```
 
@@ -149,13 +164,23 @@ FlareSolverr is third-party software and upstream reports Cloudflare actively ta
 
 Already mounted `jellyfin/install.sh:26` at `/DATA/Media` and `/DATA/Gallery`. Add libraries pointing to `/DATA/Media/Movies` and `/DATA/Media/Series` (or `/data/media` if you also mount `mediaserver` there).
 
+### 6. Seerr
+
+Request manager for Jellyfin (port 5055). First open the web UI and finish the
+setup wizard (Jellyfin login), then run `starr/configure.sh` (Seerr-only example
+in `Configure` above) to wire Sonarr/Radarr (`http://localhost:8989` /
+`http://localhost:7878` inside the CT) and Jellyfin. Without a Jellyfin API key
+only Sonarr/Radarr are wired; create one in Jellyfin Dashboard -> API Keys and
+re-run with `--jellyfin-api-key`.
+
 ## Verification
 
 ```bash
 # Inside starr CT
-pct exec $(pct list | grep -i starr | awk "{print \$1}") -- systemctl status prowlarr sonarr radarr bazarr flaresolverr
-pct exec $(pct list | grep -i starr | awk "{print \$1}") -- ss -tlnp | grep -E "9696|8989|7878|6767|8191"
+pct exec $(pct list | grep -i starr | awk "{print \$1}") -- systemctl status prowlarr sonarr radarr bazarr flaresolverr seerr
+pct exec $(pct list | grep -i starr | awk "{print \$1}") -- ss -tlnp | grep -E "9696|8989|7878|6767|8191|5055"
 pct exec $(pct list | grep -i starr | awk "{print \$1}") -- curl -fsS http://127.0.0.1:8191/health
+pct exec $(pct list | grep -i starr | awk "{print \$1}") -- curl -fsS http://127.0.0.1:5055/api/v1/settings/public
 # Host ACL check
 getfacl /tank/data/mediaserver | grep -E "1000|100000|10[0-9]{4}"
 # Hardlink test (inside CT): ln /data/downloads/series/test.mkv /data/media/Series/test.mkv && ls -i both should share inode
@@ -164,4 +189,4 @@ getfacl /tank/data/mediaserver | grep -E "1000|100000|10[0-9]{4}"
 ## Resources
 
 - Default: 4 cores / 4096 MB / 20 GB. Adjust `CT_CORES`/`CT_MEMORY`/`CT_DISK`/`CT_SWAP` in `starr/install.sh` if needed.
-- All 4 apps share the same resource pool — more efficient than 4 x 1024 MB CTs.
+- All 5 apps share the same resource pool — more efficient than 5 x 1024 MB CTs.

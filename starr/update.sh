@@ -21,7 +21,7 @@ log_step "Running apt update && apt upgrade inside container $container_id..."
 pct exec "$container_id" -- bash -c 'apt update && apt upgrade -y'
 
 # Per-app GH release update
-log_step "Checking Starr app releases (Prowlarr, Sonarr, Radarr, Bazarr)..."
+log_step "Checking Starr app releases (Prowlarr, Sonarr, Radarr, Bazarr, Seerr)..."
 if ! exec_script_in_container "$container_id" "$SCRIPT_DIR/container/update.sh"; then
     log_error "Starr update failed inside container $container_id"
     exit 1
@@ -36,4 +36,5 @@ if [ -n "$container_ip" ]; then
     log_info "  Sonarr:   http://${container_ip}:8989"
     log_info "  Radarr:   http://${container_ip}:7878"
     log_info "  Bazarr:   http://${container_ip}:6767"
+    log_info "  Seerr:    http://${container_ip}:5055"
 fi

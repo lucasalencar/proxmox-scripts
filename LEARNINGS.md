@@ -51,5 +51,15 @@
 
 - **bats `run` executes in a subshell, so variables mutated by the command under test are invisible afterwards:** asserting on side effects (counters, captured state) requires calling the function directly and capturing the exit code (`status=0; fn || status=$?`) instead of `run fn`.
 
+- **Seerr is the Jellyfin-capable successor of Jellyseerr/Overseerr:** the maintained codebase is `seerr-team/seerr`; the community `ct/seerr.sh` script auto-migrates `/opt/jellyseerr` and `/opt/overseerr` into `/opt/seerr`, so install guards should treat those legacy paths as "already installed" signals instead of assuming a fresh host.
+
+- **Seerr settings API is list-vs-singleton shaped:** Sonarr/Radarr entries are POST/PUT list items matched by display `name` (renaming in the UI orphans the match — PUT by remembered `id`), while Jellyfin is a singleton updated via POST. PUT bodies must merge the stored object (never send only owned fields) or UI-added keys are wiped on the next run.
+
+- **Fresh Seerr has no API key until the setup wizard finishes:** automation that polls `settings.json` for `main.apiKey` must treat a missing/empty key as "needs setup, skip gracefully" rather than fatal — otherwise one slow first boot blocks unrelated stages (e.g. per-app auth) that run later in the same script.
+
+- **`curl | bash` masks download failures under `set -e`:** without `pipefail` a failed download still exits 0 through a succeeding `bash`, and the script fails much later with a misleading error. Download to a file first (`curl -o setup.sh`), then execute it, so the failure surfaces at the right stage.
+
+- **Never hardcode the Node binary path when the version check accepts pre-existing installs:** an nvm/manual Node 22 passes a version gate but lives outside `/usr/bin`, so a unit file with `ExecStart=/usr/bin/node` dies with `203/EXEC`. Resolve with `command -v node` at install time and template the unit with the result.
+
 - **Do not unit-test polling loops against real wall-clock time:** either the loop spins for its full timeout (slow, flaky) or a no-op `sleep` mock turns it into a hot loop. Expose the timeout as an optional parameter (`wait_x [timeout_seconds]`, defaulting to the production value) and call the short path from tests.
 
