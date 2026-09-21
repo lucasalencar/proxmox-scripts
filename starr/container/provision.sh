@@ -313,7 +313,9 @@ install_seerr() {
     fi
     if [ "$node_major" != "22" ]; then
         log "Installing Node.js 22 (found: ${node_major:-none})..."
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        curl -fsSL -o /tmp/nodesource_setup_22.sh https://deb.nodesource.com/setup_22.x
+        bash /tmp/nodesource_setup_22.sh
+        rm -f /tmp/nodesource_setup_22.sh
         apt install -y nodejs
     fi
     if ! command -v pnpm >/dev/null 2>&1; then
@@ -345,6 +347,9 @@ install_seerr() {
         printf 'PORT=5055\n' > /etc/seerr/seerr.conf
     fi
 
+    # Resolve the binary now: a pre-existing Node 22 (nvm, /usr/local)
+    # passes the version check but may not live in /usr/bin
+    node_bin="$(command -v node)"
     cat >"$unit" <<EOF
 [Unit]
 Description=Seerr Service
@@ -358,7 +363,7 @@ Type=exec
 Restart=on-failure
 RestartSec=5
 WorkingDirectory=/opt/seerr
-ExecStart=/usr/bin/node dist/index.js
+ExecStart=${node_bin} dist/index.js
 SyslogIdentifier=seerr
 
 [Install]

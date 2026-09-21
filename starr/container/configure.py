@@ -524,6 +524,11 @@ def seerr_request(method: str, path: str, api_key: str,
 
 def read_seerr_api_key(settings_path: str = SEERR_SETTINGS_FILE,
                        timeout: int = 60) -> str:
+    """Poll the Seerr settings file for main.apiKey; "" when it never appears.
+
+    Empty means Seerr has not finished its first boot — the caller reports
+    needs_setup instead of failing, so the rest of the run still applies.
+    """
     deadline = time.time() + timeout
     last_error = "file not found"
     while time.time() < deadline:
@@ -539,8 +544,9 @@ def read_seerr_api_key(settings_path: str = SEERR_SETTINGS_FILE,
         except ValueError as exc:
             last_error = "unparseable JSON: %s" % exc
         time.sleep(2)
-    fail("timed out waiting for Seerr API key in %s: %s"
-         % (settings_path, last_error))
+    log("WARNING: timed out waiting for Seerr API key in %s: %s"
+        % (settings_path, last_error))
+    return ""
 
 
 def _seerr_servarr_base(name: str, port: int, api_key: str) -> Dict[str, Any]:
@@ -632,7 +638,8 @@ def upsert_seerr_service(list_path: str, api_key: str,
     if "id" not in target:
         fail("Seerr %s entry has no id; remove the duplicate in Seerr"
              " Settings -> Services and re-run" % desired["name"])
-    body = dict(desired)
+    body = dict(target)
+    body.update(desired)
     body["id"] = target["id"]
     seerr_request("PUT", "%s/%d" % (list_path, target["id"]), api_key, body)
     log("Seerr %s: updated" % desired["name"])
@@ -710,12 +717,17 @@ def pick_servarr_root(base: str, api_key: str, fallback: str,
 def ensure_seerr(sonarr_key: str, radarr_key: str, jellyfin_host: str,
                  jellyfin_port: int, jellyfin_api_key: str,
                  dry_run: bool,
-                 settings_path: str = SEERR_SETTINGS_FILE) -> str:
+                 settings_path: str = SEERR_SETTINGS_FILE,
+                 key_timeout: int = 60) -> str:
     if not os.path.exists(settings_path):
         log("Seerr is not installed in this container yet — run install.sh"
             " (or update.sh) first, or pass --skip-seerr")
         return "unavailable"
-    seerr_api_key = read_seerr_api_key(settings_path)
+    seerr_api_key = read_seerr_api_key(settings_path, key_timeout)
+    if not seerr_api_key:
+        log("Seerr has no API key yet — finish the setup wizard at %s,"
+            " then re-run to wire Sonarr/Radarr/Jellyfin" % SEERR_BASE)
+        return "needs_setup"
     try:
         public = seerr_request("GET", SEERR_PUBLIC_PATH, seerr_api_key) or {}
     except ApiError:

@@ -54,6 +54,8 @@ teardown() {
   /usr/bin/grep -q "pnpm could not be installed" "$REPO_ROOT/starr/container/provision.sh"
   /usr/bin/grep -q "RestartSec=5" "$REPO_ROOT/starr/container/provision.sh"
   /usr/bin/grep -q "SyslogIdentifier=seerr" "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q 'node_bin="$(command -v node)"' "$REPO_ROOT/starr/container/provision.sh"
+  /usr/bin/grep -q "nodesource_setup_22.sh" "$REPO_ROOT/starr/container/provision.sh"
   run bash -n "$REPO_ROOT/starr/container/provision.sh"
   [ "$status" -eq 0 ]
 }
@@ -123,6 +125,16 @@ teardown() {
   ! /usr/bin/grep -q "env-jelly-secret" "$MOCK_LOG"
   [[ "$output" != *"env-jelly-secret"* ]]
   unset JELLYFIN_API_KEY
+}
+
+@test "starr configure warns and continues without a jellyfin container" {
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n105        running                 starr'
+  unset JELLYFIN_API_KEY
+  run bash "$REPO_ROOT/starr/configure.sh" --skip-qbit --skip-auth --skip-bazarr --skip-flaresolverr 2>&1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"jellyfin"* ]]
+  ! /usr/bin/grep -q -- "--jellyfin-host" "$MOCK_LOG"
+  /usr/bin/grep -q -- "--jellyfin-port 8096" "$MOCK_LOG"
 }
 
 @test "starr configure runs Seerr-only without touching other services" {

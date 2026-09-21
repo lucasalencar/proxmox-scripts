@@ -180,17 +180,19 @@ fi
 
 if [ "$SKIP_SEERR" -eq 0 ] && [ -z "$JELLYFIN_HOST" ]; then
     jellyfin_id=$(get_exact_container_id_by_name "jellyfin" || true)
-    if [ -n "$jellyfin_id" ]; then
-        JELLYFIN_HOST=$(get_container_ip "$jellyfin_id")
-        if [ -z "$JELLYFIN_HOST" ]; then
-            log_error "Could not determine Jellyfin container IP. Pass --jellyfin-host explicitly."
+    if [ -z "$jellyfin_id" ]; then
+        if [ -n "$JELLYFIN_API_KEY" ]; then
+            log_error "Could not find container 'jellyfin' but a Jellyfin API key was given. Pass --jellyfin-host explicitly or pass --skip-seerr."
             exit 1
         fi
-    elif [ -n "$JELLYFIN_API_KEY" ]; then
-        log_error "Could not find container 'jellyfin' but a Jellyfin API key was given. Pass --jellyfin-host explicitly or pass --skip-seerr."
-        exit 1
-    else
         log_warning "Could not find container 'jellyfin' — Seerr will wire Sonarr/Radarr only (pass --jellyfin-host to link Jellyfin)."
+    else
+        # Transient lookup failure (stopped CT, DHCP delay) is not fatal:
+        # Sonarr/Radarr wiring and every other integration still apply
+        JELLYFIN_HOST=$(get_container_ip "$jellyfin_id" || true)
+        if [ -z "$JELLYFIN_HOST" ]; then
+            log_warning "Could not determine Jellyfin container IP — Seerr will wire Sonarr/Radarr only (pass --jellyfin-host to link Jellyfin)."
+        fi
     fi
 fi
 
