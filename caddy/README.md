@@ -9,7 +9,7 @@ Reverse proxy (LXC container) serving all `*.marx.home` subdomains.
 | `install.sh` | Creates the LXC container and installs Caddy. |
 | `update.sh` | Updates packages and upgrades the Caddy binary. |
 | `generate-caddyfile.sh` | Scans guests, prompts for ports (one subdomain per port for multi-service guests), writes `Caddyfile.local`, and reloads Caddy. |
-| `generate_caddyfile_core.py` | Entry-resolution and rendering helper invoked by `generate-caddyfile.sh` (see that script). |
+| `generate_caddyfile_core.py` | Keeps `state.json` and renders `Caddyfile.local`; invoked by `generate-caddyfile.sh` (see that script). |
 | `trust-haos.sh` | Injects Home Assistant `configuration.yaml` to trust Caddy as a reverse proxy. |
 | `trust-haos-restore.sh` | Restores a previous HA `configuration.yaml` from backup. |
 | `trust-nextcloud.sh` | Configures Nextcloud trusted_domains, trusted_proxies, and overwriteprotocol for Caddy. |
