@@ -57,3 +57,5 @@
 
 - **Python `input()` raises EOFError where bash `read` returns empty:** when porting interactive bash prompts to Python, catch `EOFError` and treat it as an empty answer so `< /dev/null` and piped-stdin flows behave identically.
 
+- **Generated output is a bad database — keep explicit state instead:** re-parsing a generated file (Caddyfile blocks via regex) to recover decisions couples the parser to output formatting; any format tweak silently drops data. A small versioned JSON state file owned by the generator is cheaper than parse-generate roundtrips and makes operator decisions (vs. discovery) explicit data instead of heuristics.
+
