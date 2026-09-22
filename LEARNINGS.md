@@ -53,3 +53,9 @@
 
 - **Do not unit-test polling loops against real wall-clock time:** either the loop spins for its full timeout (slow, flaky) or a no-op `sleep` mock turns it into a hot loop. Expose the timeout as an optional parameter (`wait_x [timeout_seconds]`, defaulting to the production value) and call the short path from tests.
 
+- **Bats mock bin shadows `python3` — resolve the real interpreter in wrappers:** a wrapper that shells out to a Python helper must bypass `tests/helpers/mocks` (its `python3` mock logs argv and swallows exit codes via an `|| echo` fallback), e.g. accept `command -v python3` unless it points under `*mocks*`, then fall back to well-known paths. Keeps bats hermetic while the helper still runs for real.
+
+- **Python `input()` raises EOFError where bash `read` returns empty:** when porting interactive bash prompts to Python, catch `EOFError` and treat it as an empty answer so `< /dev/null` and piped-stdin flows behave identically.
+
+- **Generated output is a bad database — keep explicit state instead:** re-parsing a generated file (Caddyfile blocks via regex) to recover decisions couples the parser to output formatting; any format tweak silently drops data. A small versioned JSON state file owned by the generator is cheaper than parse-generate roundtrips and makes operator decisions (vs. discovery) explicit data instead of heuristics.
+

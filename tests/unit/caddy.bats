@@ -95,6 +95,10 @@ teardown() {
     cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
   fi
   rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  if [ -f "$REPO_ROOT/caddy/state.json" ]; then
+    cp "$REPO_ROOT/caddy/state.json" "$MOCK_TMPDIR/state.json.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/state.json"
 
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n105        running                 starr'
   export MOCK_PCT_CONFIG_100="hostname: caddy"
@@ -117,6 +121,12 @@ teardown() {
   /usr/bin/grep -q "reverse_proxy 10.0.0.5:9696" "$REPO_ROOT/caddy/Caddyfile.local"
   # Multi-mode must not also emit a single starr block
   ! /usr/bin/grep -q "starr.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+  # Stdout must stay pure: core prompts/logs go to stderr, never into the file
+  ! /usr/bin/grep -q "Subdomain for" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "Does starr host" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "HTTPS (tls internal) for" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "Loading existing" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "✓" "$REPO_ROOT/caddy/Caddyfile.local"
   /usr/bin/grep -q "pct push 100" "$MOCK_LOG"
   /usr/bin/grep -q "pct exec 100" "$MOCK_LOG"
 
@@ -125,29 +135,67 @@ teardown() {
   else
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
   fi
+  if [ -f "$MOCK_TMPDIR/state.json.orig" ]; then
+    cp "$MOCK_TMPDIR/state.json.orig" "$REPO_ROOT/caddy/state.json"
+  else
+    rm -f "$REPO_ROOT/caddy/state.json"
+  fi
+}
+
+@test "caddy generate second run reuses state without prompting" {
+  if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
+    cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  if [ -f "$REPO_ROOT/caddy/state.json" ]; then
+    cp "$REPO_ROOT/caddy/state.json" "$MOCK_TMPDIR/state.json.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/state.json"
+
+  export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n107        running                 jellyfin'
+  export MOCK_PCT_CONFIG_100="hostname: caddy"
+  export MOCK_PCT_CONFIG_107="hostname: jellyfin"
+  export MOCK_PCT_STATUS="status: running"
+  export MOCK_QM_LIST="VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID"
+  export MOCK_PCT_EXEC_HOSTNAME_I="10.0.0.7"
+  export MOCK_PCT_EXEC_SS_OUTPUT=$'State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess\nLISTEN 0     128          0.0.0.0:8096      0.0.0.0:*'
+
+  run bash -c "printf '\n\n' | bash \"$REPO_ROOT/caddy/generate-caddyfile.sh\" 2>&1"
+  [ "$status" -eq 0 ]
+  cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/first.local"
+
+  run bash "$REPO_ROOT/caddy/generate-caddyfile.sh" </dev/null 2>&1
+  [ "$status" -eq 0 ]
+  diff -q "$MOCK_TMPDIR/first.local" "$REPO_ROOT/caddy/Caddyfile.local"
+  /usr/bin/grep -q "jellyfin.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
+
+  if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
+    cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
+  else
+    rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+  if [ -f "$MOCK_TMPDIR/state.json.orig" ]; then
+    cp "$MOCK_TMPDIR/state.json.orig" "$REPO_ROOT/caddy/state.json"
+  else
+    rm -f "$REPO_ROOT/caddy/state.json"
+  fi
 }
 
 @test "caddy generate reuses saved multi-service mappings without prompting" {
   if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
     cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
   fi
-  cat > "$REPO_ROOT/caddy/Caddyfile.local" <<'EOF'
-http://bazarr.marx.home {
-    reverse_proxy 10.0.0.5:6767
-}
-
-http://radarr.marx.home {
-    reverse_proxy 10.0.0.5:7878
-}
-
-http://sonarr.marx.home {
-    reverse_proxy 10.0.0.5:8989
-}
-
-http://prowlarr.marx.home {
-    reverse_proxy 10.0.0.5:9696
-}
-
+  rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  if [ -f "$REPO_ROOT/caddy/state.json" ]; then
+    cp "$REPO_ROOT/caddy/state.json" "$MOCK_TMPDIR/state.json.orig"
+  fi
+  cat > "$REPO_ROOT/caddy/state.json" <<'EOF'
+{"version": 1, "domain": "marx.home", "entries": {
+  "bazarr": {"ip": "10.0.0.5", "port": 6767, "tls": "http", "source": "auto", "guest": null},
+  "radarr": {"ip": "10.0.0.5", "port": 7878, "tls": "http", "source": "auto", "guest": null},
+  "sonarr": {"ip": "10.0.0.5", "port": 8989, "tls": "http", "source": "auto", "guest": null},
+  "prowlarr": {"ip": "10.0.0.5", "port": 9696, "tls": "http", "source": "auto", "guest": null}
+}}
 EOF
 
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n105        running                 starr'
@@ -171,17 +219,25 @@ EOF
   else
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
   fi
+  if [ -f "$MOCK_TMPDIR/state.json.orig" ]; then
+    cp "$MOCK_TMPDIR/state.json.orig" "$REPO_ROOT/caddy/state.json"
+  else
+    rm -f "$REPO_ROOT/caddy/state.json"
+  fi
 }
 
 @test "caddy generate preserves orphan blocks not owned by any guest" {
   if [ -f "$REPO_ROOT/caddy/Caddyfile.local" ]; then
     cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
   fi
-  cat > "$REPO_ROOT/caddy/Caddyfile.local" <<'EOF'
-http://myapp.marx.home {
-    reverse_proxy 10.9.9.9:1234
-}
-
+  rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  if [ -f "$REPO_ROOT/caddy/state.json" ]; then
+    cp "$REPO_ROOT/caddy/state.json" "$MOCK_TMPDIR/state.json.orig"
+  fi
+  cat > "$REPO_ROOT/caddy/state.json" <<'EOF'
+{"version": 1, "domain": "marx.home", "entries": {
+  "myapp": {"ip": "10.9.9.9", "port": 1234, "tls": "http", "source": "auto", "guest": "vanished"}
+}}
 EOF
 
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n105        running                 starr'
@@ -198,11 +254,20 @@ EOF
   /usr/bin/grep -q "reverse_proxy 10.0.0.5:8989" "$REPO_ROOT/caddy/Caddyfile.local"
   /usr/bin/grep -q "myapp.marx.home" "$REPO_ROOT/caddy/Caddyfile.local"
   /usr/bin/grep -q "reverse_proxy 10.9.9.9:1234" "$REPO_ROOT/caddy/Caddyfile.local"
+  [[ "$output" == *"Preserving unmanaged block myapp"* ]]
+  # Preserved blocks keep no log lines in the file either
+  ! /usr/bin/grep -q "Preserving unmanaged" "$REPO_ROOT/caddy/Caddyfile.local"
+  ! /usr/bin/grep -q "Port for" "$REPO_ROOT/caddy/Caddyfile.local"
 
   if [ -f "$MOCK_TMPDIR/Caddyfile.local.orig" ]; then
     cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
   else
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+  if [ -f "$MOCK_TMPDIR/state.json.orig" ]; then
+    cp "$MOCK_TMPDIR/state.json.orig" "$REPO_ROOT/caddy/state.json"
+  else
+    rm -f "$REPO_ROOT/caddy/state.json"
   fi
 }
 
@@ -211,6 +276,10 @@ EOF
     cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
   fi
   rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  if [ -f "$REPO_ROOT/caddy/state.json" ]; then
+    cp "$REPO_ROOT/caddy/state.json" "$MOCK_TMPDIR/state.json.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/state.json"
 
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n107        running                 jellyfin'
   export MOCK_PCT_CONFIG_100="hostname: caddy"
@@ -230,6 +299,11 @@ EOF
   else
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
   fi
+  if [ -f "$MOCK_TMPDIR/state.json.orig" ]; then
+    cp "$MOCK_TMPDIR/state.json.orig" "$REPO_ROOT/caddy/state.json"
+  else
+    rm -f "$REPO_ROOT/caddy/state.json"
+  fi
 }
 
 @test "caddy generate falls back to single-service when all ports skipped" {
@@ -237,6 +311,10 @@ EOF
     cp "$REPO_ROOT/caddy/Caddyfile.local" "$MOCK_TMPDIR/Caddyfile.local.orig"
   fi
   rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  if [ -f "$REPO_ROOT/caddy/state.json" ]; then
+    cp "$REPO_ROOT/caddy/state.json" "$MOCK_TMPDIR/state.json.orig"
+  fi
+  rm -f "$REPO_ROOT/caddy/state.json"
 
   export MOCK_PCT_LIST=$'VMID       Status     Lock         Name\n100        running                 caddy\n105        running                 starr'
   export MOCK_PCT_CONFIG_100="hostname: caddy"
@@ -256,5 +334,10 @@ EOF
     cp "$MOCK_TMPDIR/Caddyfile.local.orig" "$REPO_ROOT/caddy/Caddyfile.local"
   else
     rm -f "$REPO_ROOT/caddy/Caddyfile.local"
+  fi
+  if [ -f "$MOCK_TMPDIR/state.json.orig" ]; then
+    cp "$MOCK_TMPDIR/state.json.orig" "$REPO_ROOT/caddy/state.json"
+  else
+    rm -f "$REPO_ROOT/caddy/state.json"
   fi
 }

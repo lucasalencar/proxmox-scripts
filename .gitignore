@@ -3,6 +3,8 @@ MACHINE.md
 
 # Generated Caddyfile with container mappings (regenerated on each run)
 caddy/Caddyfile.local
+# Caddy state database owned by generate_caddyfile_core.py (regenerated)
+caddy/state.json
 
 # Agent Review Dir
 .reviews
